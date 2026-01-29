@@ -1,0 +1,50 @@
+name: LLMOps Agent Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'prompts/**'     # Pipeline jalan kalau ada perubahan di Prompt
+      - 'data/**'        # Pipeline jalan kalau ada perubahan di Dataset
+      - 'scripts/**'     # Pipeline jalan kalau script berubah
+      - '.github/workflows/**'
+
+permissions:
+  id-token: write   # WAJIB: Untuk OIDC AWS Authentication
+  contents: read    # Untuk checkout code
+
+jobs:
+  evaluate-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Ambil Source Code terbaru
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # 2. Siapkan Python
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    # 3. Install Library (Boto3)
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install boto3
+
+    # 4. Login ke AWS (OIDC Magic)
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: us-east-1  # Ganti jika region Mas Afif beda
+
+    # 5. Jalankan Evaluasi (The Moment of Truth)
+    - name: Update Agent & Run Evaluation
+      env:
+        AGENT_ID: ${{ secrets.AGENT_ID }}
+        AWS_REGION: us-east-1
+      run: |
+        python scripts/evaluate.py
