@@ -39,6 +39,11 @@ def update_and_prepare_agent(role_arn):
         print("❌ File instruction.txt tidak ditemukan!")
         return
 
+    # --- TAMBAHAN DEBUGGING ---
+    print(f"🕵️  Agent menggunakan Role: {role_arn}") 
+    print("    (Pastikan Role di atas punya izin 'AmazonBedrockFullAccess'!)")
+    # --------------------------
+
     print("⚡ Meng-update Agent di AWS Bedrock...")
     try:
         bedrock_agent.update_agent(
@@ -51,7 +56,6 @@ def update_and_prepare_agent(role_arn):
         print("⏳ Preparing Agent (Applying changes)...")
         bedrock_agent.prepare_agent(agentId=AGENT_ID)
         
-        # Jeda Wajib: Memberi waktu AWS menyebarkan update permission
         print("💤 Waiting 30s for Agent propagation...")
         time.sleep(30) 
         print("✅ Agent Updated & Prepared!")
