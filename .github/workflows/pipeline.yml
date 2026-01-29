@@ -68,17 +68,14 @@ jobs:
             const fs = require('fs');
 
             try {
-                // 1. Baca hasil JSON dari kedua run
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-                // 2. Hitung Diff Akurasi
                 const diff = current.accuracy - baseline.accuracy;
                 let icon = '➖';
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // 3. Analisis Perbandingan Per Item
                 let comparisonRows = "";
                 const baseResults = baseline.results;
                 const currResults = current.results;
@@ -86,42 +83,43 @@ jobs:
                 let regressionCount = 0;
                 let improvementCount = 0;
 
-                // Loop untuk mencari perbedaan nasib (Fixed / Regression)
-                // Asumsi: Urutan data sama karena menggunakan file validation.csv yang sama
                 for (let i = 0; i < baseResults.length; i++) {
                     const base = baseResults[i];
                     const curr = currResults[i];
                     
-                    // Kita hanya tampilkan row yang BERUBAH statusnya
                     if (base.is_correct !== curr.is_correct) {
                         let statusIcon = "";
                         if (base.is_correct && !curr.is_correct) {
-                            statusIcon = "❌ REGRESSION"; // Dulu bener -> Sekarang salah
+                            statusIcon = "❌ REGRESSION"; 
                             regressionCount++;
                         } else if (!base.is_correct && curr.is_correct) {
-                            statusIcon = "✅ FIXED"; // Dulu salah -> Sekarang bener
+                            statusIcon = "✅ FIXED";
                             improvementCount++;
                         }
                         
-                        // Format string agar tabel tidak berantakan (Truncate)
-                        const inputShort = base.input.length > 30 ? base.input.substring(0, 30) + "..." : base.input;
-                        const baseOutShort = base.actual_raw.replace(/\n/g, " ").substring(0, 20) + "...";
-                        const currOutShort = curr.actual_raw.replace(/\n/g, " ").substring(0, 20) + "...";
+                        const inputShort = base.input.length > 20 ? base.input.substring(0, 20) + "..." : base.input;
+                        
+                        // Handle jika actual_raw null/undefined karena error
+                        const baseReplyRaw = base.actual_raw || "N/A";
+                        const currReplyRaw = curr.actual_raw || "N/A";
 
-                        comparisonRows += `| **${statusIcon}** | ${inputShort} | ${base.expected} | ${baseOutShort} | ${currOutShort} |\n`;
+                        const baseReply = baseReplyRaw.replace(/\n/g, " ").substring(0, 30) + "...";
+                        const currReply = currReplyRaw.replace(/\n/g, " ").substring(0, 30) + "...";
+
+                        comparisonRows += `| **${statusIcon}** | ${inputShort} | ${base.expected} | ${baseReply} | ${currReply} |\n`;
                     }
                 }
 
-                // Jika tidak ada perubahan perilaku sama sekali
                 if (comparisonRows === "") {
                     comparisonRows = "| ➖ | No behavior changes detected on sample data. | | | |";
                 }
 
-                // 4. Susun Pesan Komentar Markdown
+                // FIX FORMATTING: Tambahkan \n sebelum tabel
                 const body = `
                 ### 🤖 LLMOps Impact Report
                 
                 **Overall Performance:**
+                
                 | Metric | Main Branch (Baseline) | This PR (Current) | Change |
                 |--------|------------------------|-------------------|--------|
                 | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
@@ -134,14 +132,13 @@ jobs:
                 <details open>
                 <summary>🔍 <strong>See Inference Differences</strong></summary>
                 
-                | Status | Input Snippet | Expected | Main Output | PR Output |
-                |--------|---------------|----------|-------------|-----------|
+                | Status | Input Snippet | Type | Main Reply (Baseline) | PR Reply (New) |
+                |--------|---------------|------|-----------------------|----------------|
                 ${comparisonRows}
                 
                 </details>
                 `;
 
-                // 5. Post ke Pull Request
                 github.rest.issues.createComment({
                   issue_number: context.issue.number,
                   owner: context.repo.owner,
