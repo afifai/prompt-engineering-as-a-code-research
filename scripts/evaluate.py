@@ -5,26 +5,14 @@ import time
 import os
 import json
 
-# --- UPDATE BAGIAN INI (DYNAMIC PATH FIX) ---
-# Kita ambil lokasi script ini berada, lalu mundur satu folder ke belakang (root)
-script_dir = os.path.dirname(os.path.abspath(__file__)) # Posisi: /.../repo/scripts
-project_root = os.path.dirname(script_dir)              # Posisi: /.../repo
-
-# Gabungkan path biar pasti ketemu dimanapun script dijalankan
-PROMPT_PATH = os.path.join(project_root, 'prompts', 'instruction.txt')
-DATASET_PATH = os.path.join(project_root, 'data', 'validation.csv')
-
-# Debugging: Print path yang sedang dicoba akses (biar kelihatan di log)
-print(f"📂 Project Root: {project_root}")
-print(f"📄 Looking for Prompt at: {PROMPT_PATH}")
-print(f"📄 Looking for Dataset at: {DATASET_PATH}")
-print(f"📂 Files in Root: {os.listdir(project_root)}") # Cek isi folder root
-# ----------------------------------------------
-
+# --- KONFIGURASI ---
+# Diambil dari Environment Variable (diset oleh GitHub Actions)
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0" 
-PASSING_SCORE = 80.0
+MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0" # Menggunakan Claude 3 Sonnet
+DATASET_PATH = 'data/validation.csv'
+PROMPT_PATH = 'prompts/instruction.txt'
+PASSING_SCORE = 80.0  # Threshold kelulusan (persen)
 
 # Init Boto3 Clients
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
