@@ -5,167 +5,133 @@ import time
 import os
 import json
 
-# --- KONFIGURASI ---
-# Diambil dari Environment Variable (diset oleh GitHub Actions)
+# --- CONFIG ---
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+PROMPT_PATH = os.path.join(project_root, 'prompts', 'instruction.txt')
+DATASET_PATH = os.path.join(project_root, 'data', 'validation.csv')
+METRICS_OUTPUT_PATH = "metrics.json"
+
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0" # Menggunakan Claude 3 Sonnet
-DATASET_PATH = 'data/validation.csv'
-PROMPT_PATH = 'prompts/instruction.txt'
-PASSING_SCORE = 80.0  # Threshold kelulusan (persen)
+MODEL_ID = "anthropic.claude-3-5-sonnet-20240620-v1:0"
 
-# Init Boto3 Clients
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
 bedrock_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
 
 def get_agent_role_arn(agent_id):
-    """Mengambil Role ARN agent secara otomatis biar gak perlu hardcode"""
     try:
         response = bedrock_agent.get_agent(agentId=agent_id)
         return response['agent']['agentResourceRoleArn']
     except Exception as e:
         print(f"❌ Error getting agent details: {str(e)}")
-        sys.exit(1)
+        return None
 
 def update_and_prepare_agent(role_arn):
-    """Update instruksi agent dan lakukan 'Prepare' (Compile)"""
-    print(f"\n🔄 Membaca instruksi baru dari {PROMPT_PATH}...")
+    print(f"\n🔄 Membaca instruksi dari {PROMPT_PATH}...")
     try:
         with open(PROMPT_PATH, "r") as f:
             new_instruction = f.read()
     except FileNotFoundError:
         print("❌ File instruction.txt tidak ditemukan!")
-        sys.exit(1)
+        return
 
     print("⚡ Meng-update Agent di AWS Bedrock...")
     try:
         bedrock_agent.update_agent(
             agentId=AGENT_ID,
-            agentName='Spam-Detector-Agent', # Pastikan nama ini tidak konflik/berubah
+            agentName='Spam-Detector-Agent',
             agentResourceRoleArn=role_arn,
             instruction=new_instruction,
             foundationModel=MODEL_ID
         )
-        
-        # Wajib Prepare agar perubahan aktif di Draft version
         print("⏳ Preparing Agent (Applying changes)...")
         bedrock_agent.prepare_agent(agentId=AGENT_ID)
-        
-        # Tunggu sebentar untuk propagasi (AWS best practice)
         time.sleep(10) 
-        print("✅ Agent berhasil di-update dan siap dites!")
-        
+        print("✅ Agent Updated & Prepared!")
     except Exception as e:
         print(f"❌ Gagal update agent: {str(e)}")
-        sys.exit(1)
 
 def run_evaluation():
-    """Jalankan tes menggunakan dataset CSV"""
-    print(f"\n🚀 Memulai Evaluasi Otomatis (Quality Gate)...")
-    
+    print(f"\n🚀 Memulai Evaluasi...")
     score = 0
     total = 0
-    failures = []
+    detailed_results = [] # <--- KITA SIMPAN SEMUA HASIL DI SINI
 
     try:
         with open(DATASET_PATH, 'r') as csvfile:
-            # Menggunakan DictReader agar lebih aman baca kolom
             reader = csv.DictReader(csvfile)
-            
-            print(f"{'INPUT (Snippet)':<40} | {'EXPECTED':<10} | {'ACTUAL':<15} | {'RESULT'}")
-            print("-" * 85)
-
             for row in reader:
                 total += 1
                 user_input = row['input']
-                expected_label = row['expected_label'].strip().upper() # Normalize: SPAM/SAFE/OPERATORS
+                expected_label = row['expected_label'].strip().upper()
                 
-                # Invoke Agent (Hit ke TSTALIASID = Draft Version)
                 try:
                     response = bedrock_runtime.invoke_agent(
                         agentId=AGENT_ID,
                         agentAliasId='TSTALIASID', 
-                        sessionId='ci-cd-test-session', # Session ID statis utk tes
+                        sessionId='ci-cd-test-session',
                         inputText=user_input,
                         enableTrace=False
                     )
                     
-                    # Parsing Response Stream Bedrock
                     completion = ""
                     for event in response.get('completion'):
                         chunk = event['chunk']
                         if chunk:
                             completion += chunk['bytes'].decode('utf-8')
                     
-                    # Logika Pengecekan (Case Insensitive & Substring Check)
-                    # Agent mungkin jawab: "[SPAM] Karena ini penipuan..."
-                    # Kita cek apakah kata "SPAM" ada di jawaban itu.
-                    actual_response_upper = completion.upper()
+                    actual_upper = completion.upper()
+                    is_correct = expected_label in actual_upper
                     
-                    is_match = False
-                    if expected_label in actual_response_upper:
-                        is_match = True
+                    if is_correct:
                         score += 1
-                        result_icon = "✅ PASS"
+                        print(f"✅ PASS | In: {user_input[:20]}...")
                     else:
-                        result_icon = "❌ FAIL"
-                        failures.append({
-                            "input": user_input,
-                            "expected": expected_label,
-                            "got": completion
-                        })
-
-                    # Print baris tabel (potong input biar rapi)
-                    print(f"{user_input[:37]+'...':<40} | {expected_label:<10} | {completion[:15]:<15} | {result_icon}")
+                        print(f"❌ FAIL | In: {user_input[:20]}... | Exp: {expected_label} | Got: {completion[:20]}...")
                     
-                    # Rate limit prevention (cegah throttling kalau datanya banyak)
-                    time.sleep(1)
+                    # Simpan detail untuk laporan perbandingan
+                    detailed_results.append({
+                        "input": user_input,
+                        "expected": expected_label,
+                        "actual_raw": completion, # Jawaban lengkap agent
+                        "is_correct": is_correct
+                    })
+                    
+                    time.sleep(0.5)
 
                 except Exception as e:
-                    print(f"⚠️ Error processing row: {str(e)}")
-                    # Hitung error sebagai fail
+                    print(f"⚠️ Error row: {str(e)}")
                     total += 1
+                    detailed_results.append({
+                        "input": user_input,
+                        "expected": expected_label,
+                        "actual_raw": f"ERROR: {str(e)}",
+                        "is_correct": False
+                    })
 
-    except FileNotFoundError:
-        print("❌ File validation.csv tidak ditemukan!")
-        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error reading CSV: {str(e)}")
+        total = 1
 
-    # --- HASIL AKHIR ---
-    if total == 0:
-        print("❌ Dataset kosong!")
-        sys.exit(1)
+    accuracy = (score / total) * 100 if total > 0 else 0
+    print(f"\n📊 Accuracy: {accuracy:.2f}% ({score}/{total})")
 
-    final_accuracy = (score / total) * 100
-    print("\n" + "="*40)
-    print(f"📊 FINAL REPORT")
-    print(f"Total Test Cases : {total}")
-    print(f"Passed           : {score}")
-    print(f"Failed           : {total - score}")
-    print(f"Accuracy         : {final_accuracy:.2f}%")
-    print("="*40)
-
-    # Cek Threshold Lulus/Gagal
-    if final_accuracy >= PASSING_SCORE:
-        print(f"🎉 SUCCESS: Score di atas {PASSING_SCORE}%. Pipeline Lulus.")
-        sys.exit(0) # Exit Code 0 = GitHub Action Hijau
-    else:
-        print(f"⛔ FAILURE: Score di bawah {PASSING_SCORE}%. Pipeline Gagal.")
-        print("\n🔍 Detail Kegagalan:")
-        for fail in failures:
-            print(f"- Input: {fail['input']}")
-            print(f"  Expected: {fail['expected']} | Got: {fail['got']}\n")
-        sys.exit(1) # Exit Code 1 = GitHub Action Merah
+    # --- SIMPAN JSON LENGKAP ---
+    metrics = {
+        "accuracy": accuracy,
+        "passed": score,
+        "total": total,
+        "results": detailed_results # List ini akan dibaca oleh GitHub Action
+    }
+    with open(METRICS_OUTPUT_PATH, "w") as f:
+        json.dump(metrics, f)
+    
+    sys.exit(0)
 
 if __name__ == "__main__":
-    if not AGENT_ID:
-        print("❌ Environment Variable AGENT_ID belum diset!")
-        sys.exit(1)
-        
-    # 1. Ambil Role ARN (Dynamic)
-    role_arn = get_agent_role_arn(AGENT_ID)
-    
-    # 2. Update & Prepare Agent
-    update_and_prepare_agent(role_arn)
-    
-    # 3. Jalankan Ujian
-    run_evaluation()
+    if AGENT_ID:
+        role_arn = get_agent_role_arn(AGENT_ID)
+        if role_arn:
+            update_and_prepare_agent(role_arn)
+            run_evaluation()

@@ -1,50 +1,82 @@
-name: LLMOps Agent Pipeline
+# --- STEP 3: COMPARE & COMMENT ---
+      - name: Post PR Comment Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
 
-on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - 'prompts/**'     # Pipeline jalan kalau ada perubahan di Prompt
-      - 'data/**'        # Pipeline jalan kalau ada perubahan di Dataset
-      - 'scripts/**'     # Pipeline jalan kalau script berubah
-      - '.github/workflows/**'
+            // 1. Baca hasil JSON dari kedua run
+            const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
+            const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-permissions:
-  id-token: write   # WAJIB: Untuk OIDC AWS Authentication
-  contents: read    # Untuk checkout code
+            // 2. Hitung Diff Akurasi
+            const diff = current.accuracy - baseline.accuracy;
+            let icon = '➖';
+            if (diff > 0) icon = '🚀 (Improved)';
+            if (diff < 0) icon = '⚠️ (Degraded)';
 
-jobs:
-  evaluate-and-deploy:
-    runs-on: ubuntu-latest
+            // 3. Analisis Perbandingan Per Item
+            let comparisonRows = "";
+            const baseResults = baseline.results;
+            const currResults = current.results;
+            
+            // Asumsi urutan data sama karena sumber CSV sama
+            let regressionCount = 0;
+            let improvementCount = 0;
 
-    steps:
-    # 1. Ambil Source Code terbaru
-    - name: Checkout Code
-      uses: actions/checkout@v4
+            for (let i = 0; i < baseResults.length; i++) {
+                const base = baseResults[i];
+                const curr = currResults[i];
+                
+                // Cek Perbedaan Nasib (Benar -> Salah ATAU Salah -> Benar)
+                // Kita hanya tampilkan yang BERUBAH statusnya biar tabel gak kepanjangan
+                if (base.is_correct !== curr.is_correct) {
+                    let statusIcon = "";
+                    if (base.is_correct && !curr.is_correct) {
+                        statusIcon = "❌ REGRESSION"; // Dulu bener, sekarang salah
+                        regressionCount++;
+                    } else if (!base.is_correct && curr.is_correct) {
+                        statusIcon = "✅ FIXED"; // Dulu salah, sekarang bener
+                        improvementCount++;
+                    }
+                    
+                    // Tambahkan ke baris tabel
+                    comparisonRows += `| **${statusIcon}** | ${base.input.substring(0, 40)}... | ${base.expected} | ${base.actual_raw.substring(0, 20)}... | ${curr.actual_raw.substring(0, 20)}... |\n`;
+                }
+            }
 
-    # 2. Siapkan Python
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+            // Kalau tidak ada perubahan spesifik
+            if (comparisonRows === "") {
+                comparisonRows = "| ➖ | No behavior changes detected on sample data. | | | |";
+            }
 
-    # 3. Install Library (Boto3)
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install boto3
+            // 4. Susun Pesan Komentar Markdown
+            const body = `
+            ### 🤖 LLMOps Impact Report
+            
+            **Overall Performance:**
+            | Metric | Main Branch (Baseline) | This PR (Current) | Change |
+            |--------|------------------------|-------------------|--------|
+            | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
+            
+            **Detailed Impact Analysis:**
+            - **New Fixes:** ${improvementCount}
+            - **Regressions:** ${regressionCount}
+            
+            <details open>
+            <summary>🔍 <strong>See Inference Differences</strong></summary>
+            
+            | Status | Input Snippet | Expected | Main Output | PR Output |
+            |--------|---------------|----------|-------------|-----------|
+            ${comparisonRows}
+            
+            </details>
+            `;
 
-    # 4. Login ke AWS (OIDC Magic)
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: us-east-1  # Ganti jika region Mas Afif beda
-
-    # 5. Jalankan Evaluasi (The Moment of Truth)
-    - name: Update Agent & Run Evaluation
-      env:
-        AGENT_ID: ${{ secrets.AGENT_ID }}
-        AWS_REGION: us-east-1
-      run: |
-        python scripts/evaluate.py
+            // 5. Post ke Pull Request
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
