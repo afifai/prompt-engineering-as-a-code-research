@@ -1,82 +1,155 @@
-# --- STEP 3: COMPARE & COMMENT ---
+name: LLMOps PR Evaluator
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write # IZIN PENTING: Supaya bot boleh komen di PR
+
+jobs:
+  compare-performance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # --- STEP 1: TEST BASELINE (MAIN BRANCH) ---
+      - name: Checkout Main Branch
+        uses: actions/checkout@v4
+        with:
+          ref: main          # Ambil kodingan versi Main (Stabil)
+          path: main-code    # Simpan di folder khusus
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Dependencies
+        run: pip install boto3
+
+      - name: Run Evaluation on MAIN (Baseline)
+        env:
+          AGENT_ID: ${{ secrets.AGENT_ID }}
+          AWS_REGION: us-east-1
+        run: |
+          cd main-code
+          python scripts/evaluate.py
+          mv metrics.json ../baseline_metrics.json
+          echo "✅ Baseline evaluation done."
+
+      # --- STEP 2: TEST CURRENT BRANCH (PR) ---
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          path: pr-code      # Ambil kodingan versi PR (Eksperimen)
+
+      - name: Run Evaluation on PR (New Code)
+        env:
+          AGENT_ID: ${{ secrets.AGENT_ID }}
+          AWS_REGION: us-east-1
+        run: |
+          cd pr-code
+          python scripts/evaluate.py
+          mv metrics.json ../current_metrics.json
+          echo "✅ Current PR evaluation done."
+
+      # --- STEP 3: COMPARE & COMMENT ---
       - name: Post PR Comment Report
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
 
-            // 1. Baca hasil JSON dari kedua run
-            const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
-            const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
+            try {
+                // 1. Baca hasil JSON dari kedua run
+                const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
+                const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-            // 2. Hitung Diff Akurasi
-            const diff = current.accuracy - baseline.accuracy;
-            let icon = '➖';
-            if (diff > 0) icon = '🚀 (Improved)';
-            if (diff < 0) icon = '⚠️ (Degraded)';
+                // 2. Hitung Diff Akurasi
+                const diff = current.accuracy - baseline.accuracy;
+                let icon = '➖';
+                if (diff > 0) icon = '🚀 (Improved)';
+                if (diff < 0) icon = '⚠️ (Degraded)';
 
-            // 3. Analisis Perbandingan Per Item
-            let comparisonRows = "";
-            const baseResults = baseline.results;
-            const currResults = current.results;
-            
-            // Asumsi urutan data sama karena sumber CSV sama
-            let regressionCount = 0;
-            let improvementCount = 0;
-
-            for (let i = 0; i < baseResults.length; i++) {
-                const base = baseResults[i];
-                const curr = currResults[i];
+                // 3. Analisis Perbandingan Per Item
+                let comparisonRows = "";
+                const baseResults = baseline.results;
+                const currResults = current.results;
                 
-                // Cek Perbedaan Nasib (Benar -> Salah ATAU Salah -> Benar)
-                // Kita hanya tampilkan yang BERUBAH statusnya biar tabel gak kepanjangan
-                if (base.is_correct !== curr.is_correct) {
-                    let statusIcon = "";
-                    if (base.is_correct && !curr.is_correct) {
-                        statusIcon = "❌ REGRESSION"; // Dulu bener, sekarang salah
-                        regressionCount++;
-                    } else if (!base.is_correct && curr.is_correct) {
-                        statusIcon = "✅ FIXED"; // Dulu salah, sekarang bener
-                        improvementCount++;
-                    }
+                let regressionCount = 0;
+                let improvementCount = 0;
+
+                // Loop untuk mencari perbedaan nasib (Fixed / Regression)
+                // Asumsi: Urutan data sama karena menggunakan file validation.csv yang sama
+                for (let i = 0; i < baseResults.length; i++) {
+                    const base = baseResults[i];
+                    const curr = currResults[i];
                     
-                    // Tambahkan ke baris tabel
-                    comparisonRows += `| **${statusIcon}** | ${base.input.substring(0, 40)}... | ${base.expected} | ${base.actual_raw.substring(0, 20)}... | ${curr.actual_raw.substring(0, 20)}... |\n`;
+                    // Kita hanya tampilkan row yang BERUBAH statusnya
+                    if (base.is_correct !== curr.is_correct) {
+                        let statusIcon = "";
+                        if (base.is_correct && !curr.is_correct) {
+                            statusIcon = "❌ REGRESSION"; // Dulu bener -> Sekarang salah
+                            regressionCount++;
+                        } else if (!base.is_correct && curr.is_correct) {
+                            statusIcon = "✅ FIXED"; // Dulu salah -> Sekarang bener
+                            improvementCount++;
+                        }
+                        
+                        // Format string agar tabel tidak berantakan (Truncate)
+                        const inputShort = base.input.length > 30 ? base.input.substring(0, 30) + "..." : base.input;
+                        const baseOutShort = base.actual_raw.replace(/\n/g, " ").substring(0, 20) + "...";
+                        const currOutShort = curr.actual_raw.replace(/\n/g, " ").substring(0, 20) + "...";
+
+                        comparisonRows += `| **${statusIcon}** | ${inputShort} | ${base.expected} | ${baseOutShort} | ${currOutShort} |\n`;
+                    }
                 }
+
+                // Jika tidak ada perubahan perilaku sama sekali
+                if (comparisonRows === "") {
+                    comparisonRows = "| ➖ | No behavior changes detected on sample data. | | | |";
+                }
+
+                // 4. Susun Pesan Komentar Markdown
+                const body = `
+                ### 🤖 LLMOps Impact Report
+                
+                **Overall Performance:**
+                | Metric | Main Branch (Baseline) | This PR (Current) | Change |
+                |--------|------------------------|-------------------|--------|
+                | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
+                | **Passed** | ${baseline.passed}/${baseline.total} | ${current.passed}/${current.total} | |
+                
+                **Detailed Impact Analysis:**
+                - **New Fixes:** ${improvementCount}
+                - **Regressions:** ${regressionCount}
+                
+                <details open>
+                <summary>🔍 <strong>See Inference Differences</strong></summary>
+                
+                | Status | Input Snippet | Expected | Main Output | PR Output |
+                |--------|---------------|----------|-------------|-----------|
+                ${comparisonRows}
+                
+                </details>
+                `;
+
+                // 5. Post ke Pull Request
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: body
+                });
+
+            } catch (error) {
+                console.log("Error generating report:", error);
+                core.setFailed("Failed to generate comparison report.");
             }
-
-            // Kalau tidak ada perubahan spesifik
-            if (comparisonRows === "") {
-                comparisonRows = "| ➖ | No behavior changes detected on sample data. | | | |";
-            }
-
-            // 4. Susun Pesan Komentar Markdown
-            const body = `
-            ### 🤖 LLMOps Impact Report
-            
-            **Overall Performance:**
-            | Metric | Main Branch (Baseline) | This PR (Current) | Change |
-            |--------|------------------------|-------------------|--------|
-            | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
-            
-            **Detailed Impact Analysis:**
-            - **New Fixes:** ${improvementCount}
-            - **Regressions:** ${regressionCount}
-            
-            <details open>
-            <summary>🔍 <strong>See Inference Differences</strong></summary>
-            
-            | Status | Input Snippet | Expected | Main Output | PR Output |
-            |--------|---------------|----------|-------------|-----------|
-            ${comparisonRows}
-            
-            </details>
-            `;
-
-            // 5. Post ke Pull Request
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
