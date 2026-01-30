@@ -18,7 +18,7 @@ METRICS_OUTPUT_PATH = "metrics.json"
 
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-# Pakai Claude 3 Sonnet Legacy (Yang aman billingnya)
+# Claude 3 Sonnet Legacy (Safe for Billing)
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
@@ -33,7 +33,6 @@ def get_agent_role_arn(agent_id):
         return None
 
 def update_and_prepare_agent(role_arn):
-    # ... (Sama seperti sebelumnya) ...
     print(f"\n🔄 Membaca instruksi dari {PROMPT_PATH}...")
     try:
         with open(PROMPT_PATH, "r") as f:
@@ -83,13 +82,24 @@ def invoke_agent_with_retry(user_input, max_retries=3):
                 return f"SYSTEM_ERROR: {str(e)}"
     return "SYSTEM_ERROR: Max retries reached"
 
-def extract_xml(text, tag):
-    """Helper extract XML dengan fallback"""
-    pattern = f"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text # Balikin raw text kalau tag ga ketemu
+def extract_xml_data(text):
+    """Helper extract XML Category, Reason, Reply"""
+    data = {
+        "category": "UNKNOWN",
+        "reason": "No reason provided",
+        "reply": "NO_REPLY"
+    }
+    
+    cat_match = re.search(r"<category>(.*?)</category>", text, re.DOTALL)
+    if cat_match: data["category"] = cat_match.group(1).strip().upper()
+    
+    reason_match = re.search(r"<reason>(.*?)</reason>", text, re.DOTALL)
+    if reason_match: data["reason"] = reason_match.group(1).strip()
+    
+    reply_match = re.search(r"<reply>(.*?)</reply>", text, re.DOTALL)
+    if reply_match: data["reply"] = reply_match.group(1).strip()
+    
+    return data
 
 def run_evaluation():
     print(f"\n🚀 Memulai Evaluasi...")
@@ -109,24 +119,24 @@ def run_evaluation():
                 expected_label = row['expected_label'].strip().upper()
                 
                 raw_response = invoke_agent_with_retry(user_input)
+                parsed = extract_xml_data(raw_response)
                 
-                # Parse XML
-                category = extract_xml(raw_response, "category").upper()
-                reply = extract_xml(raw_response, "reply")
-                
-                # Fallback logic jika XML gagal
-                if category == raw_response.upper(): 
-                    if expected_label in raw_response.upper():
-                        category = expected_label
+                # Fallback jika XML gagal total (mungkin error system)
+                if "SYSTEM_ERROR" in raw_response:
+                    parsed["category"] = "ERROR"
+                elif parsed["category"] == "UNKNOWN" and expected_label in raw_response.upper():
+                    # Fallback simple matching kalau format XML rusak
+                    parsed["category"] = expected_label
 
-                is_correct = expected_label in category
+                is_correct = expected_label in parsed["category"]
                 if is_correct: score += 1
                 
                 validation_results.append({
                     "input": user_input,
                     "expected": expected_label,
-                    "actual_category": category,
-                    "actual_reply": reply, # Simpan reply yang sudah bersih
+                    "actual_category": parsed["category"],
+                    "reason": parsed["reason"],
+                    "reply": parsed["reply"],
                     "is_correct": is_correct
                 })
                 time.sleep(1)
@@ -142,12 +152,14 @@ def run_evaluation():
             for row in reader:
                 user_input = row['input']
                 raw_response = invoke_agent_with_retry(user_input)
-                reply = extract_xml(raw_response, "reply") # Ambil reply-nya saja
+                parsed = extract_xml_data(raw_response)
                 
-                print(f"📥 In: {user_input[:15]}... | 📤 Out: {reply[:15]}...")
+                print(f"📥 In: {user_input[:15]}... | 🏷️ Cat: {parsed['category']}")
                 demo_results.append({
                     "input": user_input,
-                    "reply": reply
+                    "category": parsed["category"],
+                    "reason": parsed["reason"],
+                    "reply": parsed["reply"]
                 })
                 time.sleep(1)
     except Exception as e:

@@ -71,16 +71,14 @@ jobs:
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-                // --- HELPER 1: BERSIHKAN TEKS BIASA ---
+                // --- HELPER FORMATTING ---
                 const clean = (text) => {
-                    if (!text) return "N/A";
+                    if (!text) return "-";
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
                 };
                 
-                // --- HELPER 2: BERSIHKAN TEKS KHUSUS TABEL (Support <br>) ---
                 const cleanTable = (text) => {
-                    if (!text) return "N/A";
-                    // Pipe diganti I, Enter diganti <br> biar tabel ga pecah
+                    if (!text) return "-";
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
                 };
 
@@ -90,7 +88,7 @@ jobs:
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // --- 2. VALIDATION COMPARISON ---
+                // --- 2. REGRESSION ANALYSIS (LABEL COMPARISON) ---
                 const baseResults = baseline.results;
                 const currResults = current.results;
                 
@@ -105,19 +103,19 @@ jobs:
                     
                     if (base.is_correct !== curr.is_correct) {
                         const inputStr = clean(curr.input);
-                        const expectedStr = curr.expected;
                         
-                        // Batasi panjang teks di list biar gak menuhin layar
-                        const mainReply = clean(base.actual_reply || base.actual_raw).substring(0, 150);
-                        const prReply = clean(curr.actual_reply).substring(0, 150);
+                        // Fokus membandingkan LABEL (Category), bukan reply panjang
+                        const groundTruth = curr.expected;
+                        const mainLabel = base.actual_category || "N/A";
+                        const prLabel = curr.actual_category || "N/A";
                         
-                        // HTML ITEM (Tanpa Indentasi Aneh di dalam string)
                         const itemHtml = `
-                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,50)}..."</summary>
+                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,60)}..."</summary>
+                        <p><strong>Full Text:</strong> ${inputStr}</p>
                         <ul>
-                        <li><strong>Ground Truth:</strong> <code>${expectedStr}</code></li>
-                        <li><strong>Main Branch:</strong> ${mainReply}</li>
-                        <li><strong>This PR:</strong> ${prReply}</li>
+                        <li><strong>Ground Truth:</strong> <code>${groundTruth}</code></li>
+                        <li><strong>Main Branch:</strong> ${mainLabel}</li>
+                        <li><strong>This PR:</strong> ${prLabel}</li>
                         </ul>
                         </details>`;
 
@@ -131,21 +129,27 @@ jobs:
                     }
                 }
 
-                // --- 3. INFERENCE DEMO TABLE ---
+                // --- 3. INFERENCE DEMO TABLE (4 COLUMNS) ---
                 let demoTableRows = "";
                 if (current.demo_results && current.demo_results.length > 0) {
                     demoTableRows = current.demo_results.map(item => {
                         const colInput = cleanTable(item.input);
-                        const colReply = cleanTable(item.reply);
-                        return `| ${colInput} | ${colReply} |`;
+                        const colLabel = `<strong>${cleanTable(item.category)}</strong>`;
+                        const colReason = cleanTable(item.reason);
+                        
+                        // Logic Reply: Kosongkan jika NO_REPLY
+                        let colReply = cleanTable(item.reply);
+                        if (colReply === "NO_REPLY") {
+                            colReply = "<em>(No Reply)</em>";
+                        }
+
+                        return `| ${colInput} | ${colLabel} | ${colReason} | ${colReply} |`;
                     }).join("\n");
                 } else {
-                    demoTableRows = "| No Data | No Data |";
+                    demoTableRows = "| - | - | - | - |";
                 }
 
                 // --- 4. RAKIT BODY ---
-                // Perhatikan: Gunakan backtick biasa.
-                // Indentasi di sini TIDAK APA-APA karena akan kita hapus dengan regex di bawah.
                 let body = `
                 ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
@@ -156,25 +160,21 @@ jobs:
                 
                 ---
                 
-                #### 🔍 Regression Analysis
+                #### 🔍 Validation Insights
                 ${regressionCount > 0 ? regressionList : "_No regressions detected._"}
-                
-                #### ✨ New Fixes
                 ${fixCount > 0 ? fixList : "_No new fixes._"}
                 
                 ---
                 
-                #### 🎮 Generated Reply Showcase (Live Data)
-                _Simulasi balasan otomatis untuk data baru (tanpa label)._
+                #### 🎮 Live Inference Analysis
+                _Simulasi analisis pada data baru (unlabeled)._
                 
-                | User Input | AI Recommended Reply |
-                | :--- | :--- |
+                | User Input | Label | Analysis | Generated Reply |
+                | :--- | :--- | :--- | :--- |
                 ${demoTableRows}
                 `;
 
-                // --- 5. MAGIC CLEANER (SOLUSI UTAMA) ---
-                // Regex ini menghapus semua spasi di awal setiap baris (indentasi YAML).
-                // Ini membuat Markdown menjadi rata kiri (flush left) sehingga dirender benar oleh GitHub.
+                // Hapus spasi indentasi biar Markdown Valid
                 body = body.replace(/^ +/gm, '');
 
                 github.rest.issues.createComment({
