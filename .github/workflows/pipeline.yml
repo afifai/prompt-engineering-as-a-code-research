@@ -147,7 +147,7 @@ jobs:
                 ---
                 
                 #### 📋 Validation Results (Side-by-Side)
-                _Membandingkan prediksi **Main Branch** vs **This PR**. Status merah (❌) berarti PR ini salah prediksi._
+                _Membandingkan prediksi **Main Branch** vs **This PR**._
                 
                 ${validationRows}
                 
