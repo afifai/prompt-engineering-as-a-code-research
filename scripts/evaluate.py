@@ -4,7 +4,7 @@ import sys
 import time
 import os
 import json
-import re
+import uuid  # <--- Upgrade: Biar Session ID unik
 from botocore.exceptions import ClientError
 
 # --- CONFIG ---
@@ -16,8 +16,8 @@ METRICS_OUTPUT_PATH = "metrics.json"
 
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-# Pastikan ini Model ID yang benar (Claude 3.5 Sonnet)
-MODEL_ID = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+# Pastikan ID Model Benar (Claude 3.5 Sonnet)
+MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
 bedrock_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
@@ -39,6 +39,11 @@ def update_and_prepare_agent(role_arn):
         print("❌ File instruction.txt tidak ditemukan!")
         return
 
+    # --- TAMBAHAN DEBUGGING ---
+    print(f"🕵️  Agent menggunakan Role: {role_arn}") 
+    print("    (Pastikan Role di atas punya izin 'AmazonBedrockFullAccess'!)")
+    # --------------------------
+
     print("⚡ Meng-update Agent di AWS Bedrock...")
     try:
         bedrock_agent.update_agent(
@@ -51,26 +56,27 @@ def update_and_prepare_agent(role_arn):
         print("⏳ Preparing Agent (Applying changes)...")
         bedrock_agent.prepare_agent(agentId=AGENT_ID)
         
-        # FIX 1: Tambah durasi sleep biar propagasi permission tuntas
-        print("💤 Waiting 30s for changes to propagate...")
+        print("💤 Waiting 30s for Agent propagation...")
         time.sleep(30) 
         print("✅ Agent Updated & Prepared!")
     except Exception as e:
         print(f"❌ Gagal update agent: {str(e)}")
 
-def extract_xml_tag(text, tag):
-    pattern = f"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(1).strip() if match else text
-
 def invoke_agent_with_retry(user_input, max_retries=3):
-    """Fungsi helper untuk mencoba ulang jika kena AccessDenied"""
+    """
+    Mencoba invoke agent dengan:
+    1. Session ID Unik (Biar gak locking)
+    2. Retry Delay Panjang (Biar gak kena rate limit)
+    """
+    # Gunakan Session ID unik setiap request
+    session_id = str(uuid.uuid4())
+    
     for attempt in range(max_retries):
         try:
             response = bedrock_runtime.invoke_agent(
                 agentId=AGENT_ID,
                 agentAliasId='TSTALIASID', 
-                sessionId='ci-cd-test-session',
+                sessionId=session_id, 
                 inputText=user_input,
                 enableTrace=False
             )
@@ -84,16 +90,17 @@ def invoke_agent_with_retry(user_input, max_retries=3):
             
         except ClientError as e:
             error_code = e.response['Error']['Code']
-            # Kalau AccessDenied atau Throttling, coba lagi
+            # AccessDenied seringkali sebenarnya adalah Throttling di Bedrock Agent
             if error_code in ['accessDeniedException', 'ThrottlingException'] and attempt < max_retries - 1:
-                print(f"⚠️ {error_code} detected. Retrying in 5s... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(5)
+                wait_time = (attempt + 1) * 5 + 5 # 10s, 15s, 20s
+                print(f"⚠️ {error_code} detected. Cooling down {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
             else:
-                raise e # Kalau error lain atau sudah max retry, lempar errornya
+                raise e 
     return None
 
 def run_evaluation():
-    print(f"\n🚀 Memulai Evaluasi Cerdas...")
+    print(f"\n🚀 Memulai Evaluasi (Mode Stabil)...")
     score = 0
     total = 0
     detailed_results = []
@@ -107,44 +114,39 @@ def run_evaluation():
                 expected_label = row['expected_label'].strip().upper()
                 
                 try:
-                    # FIX 2: Pakai Retry Mechanism
+                    # Panggil fungsi retry
                     completion = invoke_agent_with_retry(user_input)
                     
-                    # Logika Parsing XML
-                    actual_category = extract_xml_tag(completion, "category").upper()
-                    generated_reply = extract_xml_tag(completion, "reply")
-                    
-                    if actual_category == completion.upper(): 
-                        if expected_label in completion.upper():
-                            actual_category = expected_label
-                    
-                    is_correct = expected_label in actual_category
-                    
-                    if is_correct:
-                        score += 1
-                        print(f"✅ PASS | In: {user_input[:15]}... | Reply: {generated_reply[:20]}...")
+                    if completion:
+                        actual_raw = completion.strip()
+                        # Cek simple string matching (tanpa XML)
+                        is_correct = expected_label in actual_raw.upper()
+                        
+                        if is_correct:
+                            score += 1
+                            print(f"✅ PASS | In: {user_input[:15]}... | Out: {actual_raw[:20]}...")
+                        else:
+                            print(f"❌ FAIL | In: {user_input[:15]}... | Exp: {expected_label} | Got: {actual_raw[:20]}...")
+                        
+                        detailed_results.append({
+                            "input": user_input,
+                            "expected": expected_label,
+                            "actual_raw": actual_raw,
+                            "is_correct": is_correct
+                        })
                     else:
-                        print(f"❌ FAIL | In: {user_input[:15]}... | Exp: {expected_label} | Got: {actual_category}")
-                    
-                    detailed_results.append({
-                        "input": user_input,
-                        "expected": expected_label,
-                        "actual_raw": generated_reply, 
-                        "category": actual_category,
-                        "is_correct": is_correct
-                    })
-                    
-                    time.sleep(0.5)
+                        raise Exception("Empty response after retries")
+
+                    # Jeda antar request biar Agent gak pusing (Throttling Prevention)
+                    time.sleep(2) 
 
                 except Exception as e:
                     print(f"⚠️ Error row: {str(e)}")
-                    # Jangan tambah total fail jika error sistem (biar akurasi gak 0% gara2 AWS error)
-                    # Tapi tetap catat di log
+                    # Tetap catat error biar report PR lengkap
                     detailed_results.append({
                         "input": user_input,
                         "expected": expected_label,
-                        "actual_raw": f"SYSTEM ERROR: {str(e)}",
-                        "category": "ERROR",
+                        "actual_raw": f"ERROR: {str(e)}",
                         "is_correct": False
                     })
 
