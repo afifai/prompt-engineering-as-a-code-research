@@ -74,13 +74,11 @@ jobs:
                 // --- HELPERS ---
                 const clean = (text) => {
                     if (!text) return "-";
-                    // Ganti pipe jadi I, enter jadi spasi
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
                 };
                 
                 const cleanTable = (text) => {
                     if (!text) return "-";
-                    // Ganti pipe jadi I, enter jadi <br>
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
                 };
 
@@ -90,35 +88,43 @@ jobs:
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // --- 2. VALIDATION REPORT (ALL ROWS) ---
+                // --- 2. VALIDATION REPORT (COMPARING MAIN VS PR) ---
+                const baseResults = baseline.results;
                 const currResults = current.results;
                 
-                // Header Tabel
-                let validationRows = "| Status | Input Snippet | Ground Truth | Prediction |\n| :---: | :--- | :--- | :--- |\n";
+                // Header Tabel (Sekarang 5 Kolom)
+                let validationRows = "| Status | Input Snippet | Ground Truth | Main Branch | This PR |\n| :---: | :--- | :--- | :--- | :--- |\n";
                 
-                currResults.forEach(item => {
+                // Pakai For Loop biasa biar bisa ambil index 'i'
+                for (let i = 0; i < currResults.length; i++) {
+                    const item = currResults[i];     // Hasil PR (Current)
+                    const baseItem = baseResults[i]; // Hasil Main (Baseline)
+
                     // Logic Icon
                     const statusIcon = item.is_correct ? "✅" : "❌";
                     
-                    // Format Label: Kalau [SPAM] jadi SPAM (biar rapi)
+                    // Format Data
+                    const inputShort = clean(item.input).substring(0, 30) + "...";
                     const expected = clean(item.expected);
-                    const predicted = clean(item.actual_category);
                     
-                    // Warna teks Prediction: Tebal kalau salah
-                    const predDisplay = item.is_correct ? predicted : `**${predicted}**`;
+                    // Ambil Label Prediksi
+                    const mainPred = clean(baseItem.actual_category || "N/A");
+                    const prPred = clean(item.actual_category || "N/A");
                     
-                    const inputShort = clean(item.input).substring(0, 40) + "...";
+                    // Formatting: Kalau Salah di-Bold
+                    const prDisplay = item.is_correct ? prPred : `**${prPred}**`;
                     
-                    validationRows += `| ${statusIcon} | ${inputShort} | ${expected} | ${predDisplay} |\n`;
-                });
+                    // Rakit Baris
+                    validationRows += `| ${statusIcon} | ${inputShort} | ${expected} | ${mainPred} | ${prDisplay} |\n`;
+                }
 
-                // --- 3. INFERENCE REPORT (ANALYSIS & REASONING) ---
+                // --- 3. INFERENCE REPORT (INDONESIAN ANALYSIS) ---
                 let inferenceRows = "";
                 if (current.demo_results && current.demo_results.length > 0) {
                     inferenceRows = current.demo_results.map(item => {
                         const colInput = cleanTable(item.input);
                         const colLabel = `**${cleanTable(item.category)}**`;
-                        const colReason = cleanTable(item.reason);
+                        const colReason = cleanTable(item.reason); // Ini nanti isinya Bhs Indo
                         
                         let colReply = cleanTable(item.reply);
                         if (colReply === "NO_REPLY") colReply = "<em>(No Reply)</em>";
@@ -140,22 +146,22 @@ jobs:
                 
                 ---
                 
-                #### 📋 Validation Results (Full Data)
-                _Menampilkan hasil tes validasi. Jika **Prediction** beda dengan **Ground Truth**, status akan Merah (❌)._
+                #### 📋 Validation Results (Side-by-Side)
+                _Membandingkan prediksi **Main Branch** vs **This PR**. Status merah (❌) berarti PR ini salah prediksi._
                 
                 ${validationRows}
                 
                 ---
                 
-                #### 🧠 AI Reasoning Analysis
+                #### 🧠 AI Analysis & Reasoning (Indonesian)
                 _Analisis AI terhadap data baru (Live Inference)._
                 
-                | Input | Label | AI Analysis (Reasoning) | Generated Reply |
+                | Input | Label | Analisis & Alasan | Rekomendasi Balasan |
                 | :--- | :--- | :--- | :--- |
                 ${inferenceRows}
                 `;
 
-                // Anti-Indentasi
+                // Anti-Indentasi (Wajib ada biar tabel ga pecah)
                 body = body.replace(/^ +/gm, '');
 
                 github.rest.issues.createComment({
