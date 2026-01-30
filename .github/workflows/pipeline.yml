@@ -68,89 +68,114 @@ jobs:
             const fs = require('fs');
 
             try {
-                // Helper: Bersihkan teks biar tabel gak pecah
-                // Membuang karakter pipe '|' dan ganti newline dengan spasi
-                const cleanText = (text) => {
-                    if (!text) return "N/A";
-                    return text.replace(/\|/g, "I") // Ganti pipe jadi I
-                               .replace(/[\r\n]+/g, " ") // Ganti enter jadi spasi
-                               .trim();
-                };
-
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
+                // --- HELPER FORMATTING ---
+                const clean = (text) => {
+                    if (!text) return "-";
+                    return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
+                };
+                
+                const cleanTable = (text) => {
+                    if (!text) return "-";
+                    return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
+                };
+
+                // --- 1. STATISTICS ---
                 const diff = current.accuracy - baseline.accuracy;
                 let icon = '➖';
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                let comparisonRows = "";
+                // --- 2. REGRESSION ANALYSIS (LABEL COMPARISON) ---
                 const baseResults = baseline.results;
                 const currResults = current.results;
                 
+                let regressionList = "";
+                let fixList = "";
                 let regressionCount = 0;
-                let improvementCount = 0;
+                let fixCount = 0;
 
                 for (let i = 0; i < baseResults.length; i++) {
                     const base = baseResults[i];
                     const curr = currResults[i];
                     
-                    // Kita tampilkan jika statusnya berubah ATAU jika di PR ini masih salah (biar kelihatan salahnya apa)
-                    // Tapi fokus utama adalah PERUBAHAN
                     if (base.is_correct !== curr.is_correct) {
-                        let statusIcon = "";
+                        const inputStr = clean(curr.input);
+                        
+                        // Fokus membandingkan LABEL (Category), bukan reply panjang
+                        const groundTruth = curr.expected;
+                        const mainLabel = base.actual_category || "N/A";
+                        const prLabel = curr.actual_category || "N/A";
+                        
+                        const itemHtml = `
+                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,60)}..."</summary>
+                        <p><strong>Full Text:</strong> ${inputStr}</p>
+                        <ul>
+                        <li><strong>Ground Truth:</strong> <code>${groundTruth}</code></li>
+                        <li><strong>Main Branch:</strong> ${mainLabel}</li>
+                        <li><strong>This PR:</strong> ${prLabel}</li>
+                        </ul>
+                        </details>`;
+
                         if (base.is_correct && !curr.is_correct) {
-                            statusIcon = "❌ REGRESSION"; 
+                            regressionList += `🔴 **Regression:** ${itemHtml}\n`;
                             regressionCount++;
                         } else if (!base.is_correct && curr.is_correct) {
-                            statusIcon = "✅ FIXED";
-                            improvementCount++;
+                            fixList += `🟢 **Fixed:** ${itemHtml}\n`;
+                            fixCount++;
                         }
-                        
-                        const inputShort = cleanText(base.input).substring(0, 25) + "...";
-                        
-                        // Bersihkan output agent biar rapi di tabel
-                        const baseReplyRaw = base.actual_raw || "N/A";
-                        const currReplyRaw = curr.actual_raw || "N/A";
-
-                        const baseReply = cleanText(baseReplyRaw).substring(0, 40) + "...";
-                        const currReply = cleanText(currReplyRaw).substring(0, 40) + "...";
-
-                        // FORMAT TABEL YANG BENAR (Perhatikan spasi antar pipa)
-                        comparisonRows += `| ${statusIcon} | ${inputShort} | ${base.expected} | ${baseReply} | ${currReply} |\n`;
                     }
                 }
 
-                if (comparisonRows === "") {
-                    comparisonRows = "| ➖ | No behavior changes detected. | | | |\n";
+                // --- 3. INFERENCE DEMO TABLE (4 COLUMNS) ---
+                let demoTableRows = "";
+                if (current.demo_results && current.demo_results.length > 0) {
+                    demoTableRows = current.demo_results.map(item => {
+                        const colInput = cleanTable(item.input);
+                        const colLabel = `<strong>${cleanTable(item.category)}</strong>`;
+                        const colReason = cleanTable(item.reason);
+                        
+                        // Logic Reply: Kosongkan jika NO_REPLY
+                        let colReply = cleanTable(item.reply);
+                        if (colReply === "NO_REPLY") {
+                            colReply = "<em>(No Reply)</em>";
+                        }
+
+                        return `| ${colInput} | ${colLabel} | ${colReason} | ${colReply} |`;
+                    }).join("\n");
+                } else {
+                    demoTableRows = "| - | - | - | - |";
                 }
 
-                const body = `
-                ### 🤖 LLMOps Impact Report
+                // --- 4. RAKIT BODY ---
+                let body = `
+                ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
-                **Overall Performance**
-                
-                | Metric | Main Branch (Baseline) | This PR (Current) | Change |
+                #### 📊 Scorecard
+                | Metric | Main Branch | This PR | Change |
                 | :--- | :---: | :---: | :---: |
                 | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
-                | **Passed** | ${baseline.passed}/${baseline.total} | ${current.passed}/${current.total} | |
                 
-                **Detailed Impact Analysis**
-                - **New Fixes:** ${improvementCount}
-                - **Regressions:** ${regressionCount}
+                ---
                 
-                <details open>
-                <summary>🔍 <strong>See Inference Differences</strong></summary>
+                #### 🔍 Validation Insights
+                ${regressionCount > 0 ? regressionList : "_No regressions detected._"}
+                ${fixCount > 0 ? fixList : "_No new fixes._"}
                 
-                <br/>
+                ---
                 
-                | Status | Input Snippet | Type | Main Reply (Baseline) | PR Reply (New) |
-                | :--- | :--- | :--- | :--- | :--- |
-                ${comparisonRows}
+                #### 🎮 Live Inference Analysis
+                _Simulasi analisis pada data baru (unlabeled)._
                 
-                </details>
+                | User Input | Label | Analysis | Generated Reply |
+                | :--- | :--- | :--- | :--- |
+                ${demoTableRows}
                 `;
+
+                // Hapus spasi indentasi biar Markdown Valid
+                body = body.replace(/^ +/gm, '');
 
                 github.rest.issues.createComment({
                   issue_number: context.issue.number,
@@ -161,5 +186,5 @@ jobs:
 
             } catch (error) {
                 console.log("Error generating report:", error);
-                core.setFailed("Failed to generate comparison report.");
+                core.setFailed("Failed to generate report.");
             }
