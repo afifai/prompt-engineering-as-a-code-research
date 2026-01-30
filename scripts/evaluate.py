@@ -17,7 +17,7 @@ METRICS_OUTPUT_PATH = "metrics.json"
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 # Pastikan ID Model Benar (Claude 3.5 Sonnet)
-MODEL_ID = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
 bedrock_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
