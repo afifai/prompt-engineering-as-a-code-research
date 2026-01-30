@@ -68,91 +68,86 @@ jobs:
             const fs = require('fs');
 
             try {
-                // 1. Helper: Sanitize & Truncate Text
-                const cleanAndShorten = (text, maxLength = 30) => {
-                    if (!text) return "N/A";
-                    // Ganti System Error panjang jadi label pendek
-                    if (text.includes("SYSTEM ERROR") || text.includes("accessDenied")) {
-                        return "⚠️ AWS Access Error";
-                    }
-                    // Bersihkan pipa, enter, dan spasi ganda
-                    let clean = text.replace(/\|/g, "I")
-                                    .replace(/[\r\n]+/g, " ")
-                                    .replace(/\s+/g, " ")
-                                    .trim();
-                    // Potong jika kepanjangan
-                    return clean.length > maxLength ? clean.substring(0, maxLength) + "..." : clean;
-                };
-
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-                // 2. Tentukan Icon Perubahan
+                // --- 1. STATISTICS ---
                 const diff = current.accuracy - baseline.accuracy;
                 let icon = '➖';
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // 3. Generate Rows
-                let rows = "";
+                // --- 2. VALIDATION ANALYSIS (LIST MODE) ---
+                // Kita tidak pakai tabel raksasa lagi biar tidak pecah
                 const baseResults = baseline.results;
                 const currResults = current.results;
                 
+                let regressionList = "";
+                let fixList = "";
                 let regressionCount = 0;
-                let improvementCount = 0;
+                let fixCount = 0;
 
                 for (let i = 0; i < baseResults.length; i++) {
                     const base = baseResults[i];
                     const curr = currResults[i];
                     
                     if (base.is_correct !== curr.is_correct) {
-                        let statusIcon = "";
+                        // Bersihkan teks
+                        const inputClean = curr.input.replace(/[\r\n]+/g, " ");
+                        const expected = curr.expected;
+                        const gotRaw = curr.actual_raw.replace(/[\r\n]+/g, " ").substring(0, 50) + "...";
+                        
                         if (base.is_correct && !curr.is_correct) {
-                            statusIcon = "❌ REGRESSION"; 
+                            // REGRESSION
+                            regressionList += `- 🔴 **Input:** "${inputClean}"\n  - **Ground Truth:** ${expected}\n  - **AI Reply:** ${gotRaw}\n`;
                             regressionCount++;
                         } else if (!base.is_correct && curr.is_correct) {
-                            statusIcon = "✅ FIXED";
-                            improvementCount++;
+                            // FIXED
+                            fixList += `- 🟢 **Input:** "${inputClean}"\n  - **Ground Truth:** ${expected}\n  - **AI Reply:** ${gotRaw}\n`;
+                            fixCount++;
                         }
-                        
-                        const inputShort = cleanAndShorten(base.input, 20);
-                        const baseReply = cleanAndShorten(base.actual_raw, 30);
-                        const currReply = cleanAndShorten(curr.actual_raw, 30);
-
-                        // RAKIT BARIS TABEL (Tanpa spasi extra)
-                        rows += `| ${statusIcon} | ${inputShort} | ${base.expected} | ${baseReply} | ${currReply} |\n`;
                     }
                 }
 
-                if (rows === "") {
-                    rows = "| ➖ | No changes | - | - | - |\n";
+                // --- 3. LIVE DEMO INFERENCE (NEW DATA) ---
+                // Menampilkan 5 sample data baru
+                let demoRows = "";
+                if (current.demo_results) {
+                    current.demo_results.forEach(item => {
+                        const replyClean = item.reply.replace(/[\r\n]+/g, "<br>").replace(/\|/g, "I"); // Pakai <br> biar rapi di tabel
+                        demoRows += `| ${item.input} | ${replyClean} |\n`;
+                    });
+                } else {
+                    demoRows = "| No demo data | - |\n";
                 }
 
-                // 4. Rakit Header Tabel (Dipisah biar rapi)
-                const tableHeader = `| Status | Input | Type | Baseline | New |\n| :--- | :--- | :--- | :--- | :--- |\n`;
-                const finalTable = tableHeader + rows;
-
-                // 5. Susun Pesan Final
+                // --- 4. RAKIT BODY ---
+                // Kita pisah string biar aman dari indentasi
                 const body = `
-                ### 🤖 LLMOps Impact Report
+                ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
-                **Overall Performance**
+                #### 📊 Overall Performance
                 | Metric | Main Branch | This PR | Change |
                 | :--- | :---: | :---: | :---: |
                 | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
-                | **Passed** | ${baseline.passed}/${baseline.total} | ${current.passed}/${current.total} | |
                 
-                **Analysis**
-                - 🟢 **New Fixes:** ${improvementCount}
-                - 🔴 **Regressions:** ${regressionCount}
+                ---
                 
-                <details open>
-                <summary>🔍 <strong>See Inference Differences</strong></summary>
-                <br/>
-
-                ${finalTable}
+                #### 🔍 Validation Insights
+                **New Fixes: ${fixCount}**
+                ${fixCount > 0 ? fixList : "_No new fixes._"}
                 
-                </details>
+                **Regressions: ${regressionCount}**
+                ${regressionCount > 0 ? regressionList : "_No regressions._"}
+                
+                ---
+                
+                #### 🎮 Live Inference Demo (Unlabeled Data)
+                _Berikut adalah simulasi balasan AI untuk data baru:_
+                
+                | User Input | Generated Reply (Recommendation) |
+                | :--- | :--- |
+                ${demoRows}
                 `;
 
                 github.rest.issues.createComment({
@@ -164,5 +159,5 @@ jobs:
 
             } catch (error) {
                 console.log("Error generating report:", error);
-                core.setFailed("Failed to generate comparison report.");
+                core.setFailed("Failed to generate report.");
             }

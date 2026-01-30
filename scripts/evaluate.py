@@ -4,7 +4,7 @@ import sys
 import time
 import os
 import json
-import uuid  # <--- Upgrade: Biar Session ID unik
+import uuid
 from botocore.exceptions import ClientError
 
 # --- CONFIG ---
@@ -16,7 +16,7 @@ METRICS_OUTPUT_PATH = "metrics.json"
 
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-# Pastikan ID Model Benar (Claude 3.5 Sonnet)
+# Gunakan Claude 3 Sonnet (Legacy)
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
@@ -31,6 +31,7 @@ def get_agent_role_arn(agent_id):
         return None
 
 def update_and_prepare_agent(role_arn):
+    # ... (BAGIAN INI TETAP SAMA SEPERTI SEBELUMNYA) ...
     print(f"\n🔄 Membaca instruksi dari {PROMPT_PATH}...")
     try:
         with open(PROMPT_PATH, "r") as f:
@@ -38,11 +39,6 @@ def update_and_prepare_agent(role_arn):
     except FileNotFoundError:
         print("❌ File instruction.txt tidak ditemukan!")
         return
-
-    # --- TAMBAHAN DEBUGGING ---
-    print(f"🕵️  Agent menggunakan Role: {role_arn}") 
-    print("    (Pastikan Role di atas punya izin 'AmazonBedrockFullAccess'!)")
-    # --------------------------
 
     print("⚡ Meng-update Agent di AWS Bedrock...")
     try:
@@ -55,7 +51,6 @@ def update_and_prepare_agent(role_arn):
         )
         print("⏳ Preparing Agent (Applying changes)...")
         bedrock_agent.prepare_agent(agentId=AGENT_ID)
-        
         print("💤 Waiting 30s for Agent propagation...")
         time.sleep(30) 
         print("✅ Agent Updated & Prepared!")
@@ -63,14 +58,7 @@ def update_and_prepare_agent(role_arn):
         print(f"❌ Gagal update agent: {str(e)}")
 
 def invoke_agent_with_retry(user_input, max_retries=3):
-    """
-    Mencoba invoke agent dengan:
-    1. Session ID Unik (Biar gak locking)
-    2. Retry Delay Panjang (Biar gak kena rate limit)
-    """
-    # Gunakan Session ID unik setiap request
     session_id = str(uuid.uuid4())
-    
     for attempt in range(max_retries):
         try:
             response = bedrock_runtime.invoke_agent(
@@ -80,31 +68,37 @@ def invoke_agent_with_retry(user_input, max_retries=3):
                 inputText=user_input,
                 enableTrace=False
             )
-            
             completion = ""
             for event in response.get('completion'):
                 chunk = event['chunk']
                 if chunk:
                     completion += chunk['bytes'].decode('utf-8')
             return completion
-            
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            # AccessDenied seringkali sebenarnya adalah Throttling di Bedrock Agent
-            if error_code in ['accessDeniedException', 'ThrottlingException'] and attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 5 + 5 # 10s, 15s, 20s
-                print(f"⚠️ {error_code} detected. Cooling down {wait_time}s... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
+            if attempt < max_retries - 1:
+                time.sleep(5)
             else:
-                raise e 
-    return None
+                return f"SYSTEM_ERROR: {str(e)}"
+    return "SYSTEM_ERROR: Max retries reached"
+
+# --- DATA DEMO BARU (TANPA LABEL) ---
+# Ini ceritanya data live yang masuk untuk dites reply-nya
+DEMO_INPUTS = [
+    "Mas, paket internet saya habis, ada promo murah ga?",
+    "Selamat! Anda menang undian 500 juta, hubungi bapak budi.",
+    "Pinjam dulu seratus besok diganti",
+    "Kode OTP anda 4829. Jangan berikan ke siapapun.",
+    "Kami dari kepolisian, anak anda tertangkap narkoba."
+]
 
 def run_evaluation():
-    print(f"\n🚀 Memulai Evaluasi (Mode Stabil)...")
+    print(f"\n🚀 Memulai Evaluasi...")
+    
+    # 1. RUN VALIDATION (SAMA SEPERTI SEBELUMNYA)
     score = 0
     total = 0
-    detailed_results = []
-
+    validation_results = []
+    
     try:
         with open(DATASET_PATH, 'r') as csvfile:
             reader = csv.DictReader(csvfile)
@@ -113,56 +107,44 @@ def run_evaluation():
                 user_input = row['input']
                 expected_label = row['expected_label'].strip().upper()
                 
-                try:
-                    # Panggil fungsi retry
-                    completion = invoke_agent_with_retry(user_input)
-                    
-                    if completion:
-                        actual_raw = completion.strip()
-                        # Cek simple string matching (tanpa XML)
-                        is_correct = expected_label in actual_raw.upper()
-                        
-                        if is_correct:
-                            score += 1
-                            print(f"✅ PASS | In: {user_input[:15]}... | Out: {actual_raw[:20]}...")
-                        else:
-                            print(f"❌ FAIL | In: {user_input[:15]}... | Exp: {expected_label} | Got: {actual_raw[:20]}...")
-                        
-                        detailed_results.append({
-                            "input": user_input,
-                            "expected": expected_label,
-                            "actual_raw": actual_raw,
-                            "is_correct": is_correct
-                        })
-                    else:
-                        raise Exception("Empty response after retries")
-
-                    # Jeda antar request biar Agent gak pusing (Throttling Prevention)
-                    time.sleep(2) 
-
-                except Exception as e:
-                    print(f"⚠️ Error row: {str(e)}")
-                    # Tetap catat error biar report PR lengkap
-                    detailed_results.append({
-                        "input": user_input,
-                        "expected": expected_label,
-                        "actual_raw": f"ERROR: {str(e)}",
-                        "is_correct": False
-                    })
-
+                completion = invoke_agent_with_retry(user_input)
+                actual_raw = completion.strip()
+                is_correct = expected_label in actual_raw.upper()
+                
+                if is_correct: score += 1
+                
+                validation_results.append({
+                    "input": user_input,
+                    "expected": expected_label,
+                    "actual_raw": actual_raw,
+                    "is_correct": is_correct
+                })
+                time.sleep(1) # Jeda dikit
     except Exception as e:
-        print(f"❌ Error reading CSV: {str(e)}")
-        total = 1
+        print(f"❌ Error validation: {str(e)}")
 
+    # 2. RUN DEMO INFERENCE (DATA BARU)
+    print(f"\n🎮 Memulai Demo Inference (New Data)...")
+    demo_results = []
+    for text in DEMO_INPUTS:
+        reply = invoke_agent_with_retry(text)
+        print(f"📥 In: {text[:20]}... | 📤 Out: {reply[:20]}...")
+        demo_results.append({
+            "input": text,
+            "reply": reply
+        })
+        time.sleep(1)
+
+    # OUTPUT JSON
     accuracy = (score / total) * 100 if total > 0 else 0
-    print(f"\n📊 Accuracy: {accuracy:.2f}% ({score}/{total})")
-
     metrics = {
         "accuracy": accuracy,
         "passed": score,
         "total": total,
-        "results": detailed_results
+        "results": validation_results,
+        "demo_results": demo_results # <--- INI DATA BARU
     }
+    
     with open(METRICS_OUTPUT_PATH, "w") as f:
         json.dump(metrics, f)
     
