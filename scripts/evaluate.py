@@ -18,7 +18,6 @@ METRICS_OUTPUT_PATH = "metrics.json"
 
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-# Claude 3 Sonnet Legacy (Safe for Billing)
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
@@ -83,21 +82,32 @@ def invoke_agent_with_retry(user_input, max_retries=3):
     return "SYSTEM_ERROR: Max retries reached"
 
 def extract_xml_data(text):
-    """Helper extract XML Category, Reason, Reply"""
+    """
+    Helper extract XML dengan Regex yang lebih kuat (ignore case & whitespace)
+    """
     data = {
         "category": "UNKNOWN",
         "reason": "No reason provided",
         "reply": "NO_REPLY"
     }
     
-    cat_match = re.search(r"<category>(.*?)</category>", text, re.DOTALL)
-    if cat_match: data["category"] = cat_match.group(1).strip().upper()
+    # Regex pattern: Mencari tag dengan kelonggaran spasi
+    # re.DOTALL: bikin titik (.) bisa match newline
+    # re.IGNORECASE: tidak peduli huruf besar/kecil tag-nya
     
-    reason_match = re.search(r"<reason>(.*?)</reason>", text, re.DOTALL)
-    if reason_match: data["reason"] = reason_match.group(1).strip()
+    cat_match = re.search(r"<\s*category\s*>(.*?)<\s*/\s*category\s*>", text, re.DOTALL | re.IGNORECASE)
+    if cat_match: 
+        # Hapus kurung siku [] jika AI menambahkannya, lalu uppercase
+        clean_cat = cat_match.group(1).replace("[", "").replace("]", "").strip().upper()
+        data["category"] = clean_cat
     
-    reply_match = re.search(r"<reply>(.*?)</reply>", text, re.DOTALL)
-    if reply_match: data["reply"] = reply_match.group(1).strip()
+    reason_match = re.search(r"<\s*reason\s*>(.*?)<\s*/\s*reason\s*>", text, re.DOTALL | re.IGNORECASE)
+    if reason_match: 
+        data["reason"] = reason_match.group(1).strip()
+    
+    reply_match = re.search(r"<\s*reply\s*>(.*?)<\s*/\s*reply\s*>", text, re.DOTALL | re.IGNORECASE)
+    if reply_match: 
+        data["reply"] = reply_match.group(1).strip()
     
     return data
 
@@ -121,22 +131,16 @@ def run_evaluation():
                 raw_response = invoke_agent_with_retry(user_input)
                 parsed = extract_xml_data(raw_response)
                 
-                # Fallback jika XML gagal total (mungkin error system)
-                if "SYSTEM_ERROR" in raw_response:
-                    parsed["category"] = "ERROR"
-                elif parsed["category"] == "UNKNOWN" and expected_label in raw_response.upper():
-                    # Fallback simple matching kalau format XML rusak
-                    parsed["category"] = expected_label
-
+                # Check correctness
+                # Kita cek substring karena AI mungkin jawab "SPAM" atau "[SPAM]"
                 is_correct = expected_label in parsed["category"]
+                
                 if is_correct: score += 1
                 
                 validation_results.append({
                     "input": user_input,
                     "expected": expected_label,
-                    "actual_category": parsed["category"],
-                    "reason": parsed["reason"],
-                    "reply": parsed["reply"],
+                    "actual_category": parsed["category"], # Label Prediksi
                     "is_correct": is_correct
                 })
                 time.sleep(1)
@@ -155,6 +159,7 @@ def run_evaluation():
                 parsed = extract_xml_data(raw_response)
                 
                 print(f"📥 In: {user_input[:15]}... | 🏷️ Cat: {parsed['category']}")
+                
                 demo_results.append({
                     "input": user_input,
                     "category": parsed["category"],

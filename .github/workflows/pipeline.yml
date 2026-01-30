@@ -71,85 +71,65 @@ jobs:
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-                // --- HELPER FORMATTING ---
+                // --- HELPERS ---
                 const clean = (text) => {
                     if (!text) return "-";
+                    // Ganti pipe jadi I, enter jadi spasi
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
                 };
                 
                 const cleanTable = (text) => {
                     if (!text) return "-";
+                    // Ganti pipe jadi I, enter jadi <br>
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
                 };
 
-                // --- 1. STATISTICS ---
+                // --- 1. SCORECARD ---
                 const diff = current.accuracy - baseline.accuracy;
                 let icon = '➖';
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // --- 2. REGRESSION ANALYSIS (LABEL COMPARISON) ---
-                const baseResults = baseline.results;
+                // --- 2. VALIDATION REPORT (ALL ROWS) ---
                 const currResults = current.results;
                 
-                let regressionList = "";
-                let fixList = "";
-                let regressionCount = 0;
-                let fixCount = 0;
-
-                for (let i = 0; i < baseResults.length; i++) {
-                    const base = baseResults[i];
-                    const curr = currResults[i];
+                // Header Tabel
+                let validationRows = "| Status | Input Snippet | Ground Truth | Prediction |\n| :---: | :--- | :--- | :--- |\n";
+                
+                currResults.forEach(item => {
+                    // Logic Icon
+                    const statusIcon = item.is_correct ? "✅" : "❌";
                     
-                    if (base.is_correct !== curr.is_correct) {
-                        const inputStr = clean(curr.input);
-                        
-                        // Fokus membandingkan LABEL (Category), bukan reply panjang
-                        const groundTruth = curr.expected;
-                        const mainLabel = base.actual_category || "N/A";
-                        const prLabel = curr.actual_category || "N/A";
-                        
-                        const itemHtml = `
-                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,60)}..."</summary>
-                        <p><strong>Full Text:</strong> ${inputStr}</p>
-                        <ul>
-                        <li><strong>Ground Truth:</strong> <code>${groundTruth}</code></li>
-                        <li><strong>Main Branch:</strong> ${mainLabel}</li>
-                        <li><strong>This PR:</strong> ${prLabel}</li>
-                        </ul>
-                        </details>`;
+                    // Format Label: Kalau [SPAM] jadi SPAM (biar rapi)
+                    const expected = clean(item.expected);
+                    const predicted = clean(item.actual_category);
+                    
+                    // Warna teks Prediction: Tebal kalau salah
+                    const predDisplay = item.is_correct ? predicted : `**${predicted}**`;
+                    
+                    const inputShort = clean(item.input).substring(0, 40) + "...";
+                    
+                    validationRows += `| ${statusIcon} | ${inputShort} | ${expected} | ${predDisplay} |\n`;
+                });
 
-                        if (base.is_correct && !curr.is_correct) {
-                            regressionList += `🔴 **Regression:** ${itemHtml}\n`;
-                            regressionCount++;
-                        } else if (!base.is_correct && curr.is_correct) {
-                            fixList += `🟢 **Fixed:** ${itemHtml}\n`;
-                            fixCount++;
-                        }
-                    }
-                }
-
-                // --- 3. INFERENCE DEMO TABLE (4 COLUMNS) ---
-                let demoTableRows = "";
+                // --- 3. INFERENCE REPORT (ANALYSIS & REASONING) ---
+                let inferenceRows = "";
                 if (current.demo_results && current.demo_results.length > 0) {
-                    demoTableRows = current.demo_results.map(item => {
+                    inferenceRows = current.demo_results.map(item => {
                         const colInput = cleanTable(item.input);
-                        const colLabel = `<strong>${cleanTable(item.category)}</strong>`;
+                        const colLabel = `**${cleanTable(item.category)}**`;
                         const colReason = cleanTable(item.reason);
                         
-                        // Logic Reply: Kosongkan jika NO_REPLY
                         let colReply = cleanTable(item.reply);
-                        if (colReply === "NO_REPLY") {
-                            colReply = "<em>(No Reply)</em>";
-                        }
+                        if (colReply === "NO_REPLY") colReply = "<em>(No Reply)</em>";
 
                         return `| ${colInput} | ${colLabel} | ${colReason} | ${colReply} |`;
                     }).join("\n");
                 } else {
-                    demoTableRows = "| - | - | - | - |";
+                    inferenceRows = "| - | - | - | - |";
                 }
 
-                // --- 4. RAKIT BODY ---
+                // --- 4. RAKIT LAPORAN ---
                 let body = `
                 ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
@@ -160,21 +140,22 @@ jobs:
                 
                 ---
                 
-                #### 🔍 Validation Insights
-                ${regressionCount > 0 ? regressionList : "_No regressions detected._"}
-                ${fixCount > 0 ? fixList : "_No new fixes._"}
+                #### 📋 Validation Results (Full Data)
+                _Menampilkan hasil tes validasi. Jika **Prediction** beda dengan **Ground Truth**, status akan Merah (❌)._
+                
+                ${validationRows}
                 
                 ---
                 
-                #### 🎮 Live Inference Analysis
-                _Simulasi analisis pada data baru (unlabeled)._
+                #### 🧠 AI Reasoning Analysis
+                _Analisis AI terhadap data baru (Live Inference)._
                 
-                | User Input | Label | Analysis | Generated Reply |
+                | Input | Label | AI Analysis (Reasoning) | Generated Reply |
                 | :--- | :--- | :--- | :--- |
-                ${demoTableRows}
+                ${inferenceRows}
                 `;
 
-                // Hapus spasi indentasi biar Markdown Valid
+                // Anti-Indentasi
                 body = body.replace(/^ +/gm, '');
 
                 github.rest.issues.createComment({
