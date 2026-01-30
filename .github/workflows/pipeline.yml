@@ -71,13 +71,25 @@ jobs:
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
+                // --- HELPER FORMATTING ---
+                const clean = (text) => {
+                    if (!text) return "N/A";
+                    return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
+                };
+                
+                const cleanTable = (text) => {
+                    if (!text) return "N/A";
+                    // Ganti newline dengan <br> khusus untuk tabel
+                    return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
+                };
+
                 // --- 1. STATISTICS ---
                 const diff = current.accuracy - baseline.accuracy;
                 let icon = '➖';
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // --- 2. VALIDATION ANALYSIS (Ground Truth Comparison) ---
+                // --- 2. VALIDATION COMPARISON (Showing Main vs PR) ---
                 const baseResults = baseline.results;
                 const currResults = current.results;
                 
@@ -91,62 +103,70 @@ jobs:
                     const curr = currResults[i];
                     
                     if (base.is_correct !== curr.is_correct) {
-                        const inputClean = curr.input.replace(/[\r\n]+/g, " ");
-                        const expected = curr.expected; // INI GROUND TRUTH NYA
-                        const gotRaw = curr.actual_raw.replace(/[\r\n]+/g, " ").substring(0, 60) + "..."; // Truncate dikit biar gak menuhin layar
+                        const inputStr = clean(curr.input);
+                        const expectedStr = curr.expected;
                         
+                        // Bandingkan Reply Lama vs Baru
+                        const mainReply = clean(base.actual_reply || base.actual_raw).substring(0, 100);
+                        const prReply = clean(curr.actual_reply).substring(0, 100);
+                        
+                        const itemHtml = `
+                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,40)}..."</summary>
+                          <ul>
+                            <li><strong>Ground Truth:</strong> <code>${expectedStr}</code></li>
+                            <li><strong>Main Branch:</strong> ${mainReply}</li>
+                            <li><strong>This PR:</strong> ${prReply}</li>
+                          </ul>
+                        </details>\n`;
+
                         if (base.is_correct && !curr.is_correct) {
-                            // REGRESSION
-                            regressionList += `- 🔴 **Input:** "${inputClean}"\n  - **Ground Truth:** \`${expected}\`\n  - **AI Reply:** ${gotRaw}\n\n`;
+                            regressionList += `🔴 **Regression:** ${itemHtml}`;
                             regressionCount++;
                         } else if (!base.is_correct && curr.is_correct) {
-                            // FIXED
-                            fixList += `- 🟢 **Input:** "${inputClean}"\n  - **Ground Truth:** \`${expected}\`\n  - **AI Reply:** ${gotRaw}\n\n`;
+                            fixList += `🟢 **Fixed:** ${itemHtml}`;
                             fixCount++;
                         }
                     }
                 }
 
-                // --- 3. INFERENCE DEMO (Data Baru Tanpa Label) ---
-                let demoRows = "";
+                // --- 3. INFERENCE DEMO TABLE (Strict Formatting) ---
+                let demoTableRows = "";
                 if (current.demo_results && current.demo_results.length > 0) {
-                    current.demo_results.forEach(item => {
-                        // Clean text for table formatting
-                        const replyClean = item.reply.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>"); 
-                        demoRows += `| ${item.input} | ${replyClean} |\n`;
-                    });
+                     // PENTING: Pakai map dan join biar newline ga ngerusak tabel
+                    demoTableRows = current.demo_results.map(item => {
+                        const colInput = cleanTable(item.input);
+                        const colReply = cleanTable(item.reply);
+                        return `| ${colInput} | ${colReply} |`;
+                    }).join("\n");
                 } else {
-                    demoRows = "| No inference data found | - |\n";
+                    demoTableRows = "| No Data | No Data |";
                 }
 
                 // --- 4. RAKIT BODY ---
                 const body = `
                 ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
-                #### 📊 Overall Performance (Validation Set)
+                #### 📊 Scorecard
                 | Metric | Main Branch | This PR | Change |
                 | :--- | :---: | :---: | :---: |
                 | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
                 
                 ---
                 
-                #### 🔍 Validation Insights (Ground Truth vs Prediction)
-                > Menampilkan item yang statusnya berubah (Benar <-> Salah) dibanding Main Branch.
+                #### 🔍 Regression Analysis
+                ${regressionCount > 0 ? regressionList : "_No regressions detected._"}
                 
-                **New Fixes: ${fixCount}**
+                #### ✨ New Fixes
                 ${fixCount > 0 ? fixList : "_No new fixes._"}
-                
-                **Regressions: ${regressionCount}**
-                ${regressionCount > 0 ? regressionList : "_No regressions._"}
                 
                 ---
                 
-                #### 🎮 Live Inference Showcase
-                > Simulasi balasan AI menggunakan data baru dari \`data/inference.csv\`.
+                #### 🎮 Generated Reply Showcase (Live Data)
+                _Simulasi balasan otomatis untuk data baru (tanpa label)._
                 
-                | User Input | Generated Reply (Recommendation) |
+                | User Input | AI Recommended Reply |
                 | :--- | :--- |
-                ${demoRows}
+                ${demoTableRows}
                 `;
 
                 github.rest.issues.createComment({
