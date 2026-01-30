@@ -71,15 +71,16 @@ jobs:
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
-                // --- HELPER FORMATTING ---
+                // --- HELPER 1: BERSIHKAN TEKS BIASA ---
                 const clean = (text) => {
                     if (!text) return "N/A";
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
                 };
                 
+                // --- HELPER 2: BERSIHKAN TEKS KHUSUS TABEL (Support <br>) ---
                 const cleanTable = (text) => {
                     if (!text) return "N/A";
-                    // Ganti newline dengan <br> khusus untuk tabel
+                    // Pipe diganti I, Enter diganti <br> biar tabel ga pecah
                     return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
                 };
 
@@ -89,7 +90,7 @@ jobs:
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // --- 2. VALIDATION COMPARISON (Showing Main vs PR) ---
+                // --- 2. VALIDATION COMPARISON ---
                 const baseResults = baseline.results;
                 const currResults = current.results;
                 
@@ -106,33 +107,33 @@ jobs:
                         const inputStr = clean(curr.input);
                         const expectedStr = curr.expected;
                         
-                        // Bandingkan Reply Lama vs Baru
-                        const mainReply = clean(base.actual_reply || base.actual_raw).substring(0, 100);
-                        const prReply = clean(curr.actual_reply).substring(0, 100);
+                        // Batasi panjang teks di list biar gak menuhin layar
+                        const mainReply = clean(base.actual_reply || base.actual_raw).substring(0, 150);
+                        const prReply = clean(curr.actual_reply).substring(0, 150);
                         
+                        // HTML ITEM (Tanpa Indentasi Aneh di dalam string)
                         const itemHtml = `
-                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,40)}..."</summary>
-                          <ul>
-                            <li><strong>Ground Truth:</strong> <code>${expectedStr}</code></li>
-                            <li><strong>Main Branch:</strong> ${mainReply}</li>
-                            <li><strong>This PR:</strong> ${prReply}</li>
-                          </ul>
-                        </details>\n`;
+                        <details><summary><strong>Input:</strong> "${inputStr.substring(0,50)}..."</summary>
+                        <ul>
+                        <li><strong>Ground Truth:</strong> <code>${expectedStr}</code></li>
+                        <li><strong>Main Branch:</strong> ${mainReply}</li>
+                        <li><strong>This PR:</strong> ${prReply}</li>
+                        </ul>
+                        </details>`;
 
                         if (base.is_correct && !curr.is_correct) {
-                            regressionList += `🔴 **Regression:** ${itemHtml}`;
+                            regressionList += `🔴 **Regression:** ${itemHtml}\n`;
                             regressionCount++;
                         } else if (!base.is_correct && curr.is_correct) {
-                            fixList += `🟢 **Fixed:** ${itemHtml}`;
+                            fixList += `🟢 **Fixed:** ${itemHtml}\n`;
                             fixCount++;
                         }
                     }
                 }
 
-                // --- 3. INFERENCE DEMO TABLE (Strict Formatting) ---
+                // --- 3. INFERENCE DEMO TABLE ---
                 let demoTableRows = "";
                 if (current.demo_results && current.demo_results.length > 0) {
-                     // PENTING: Pakai map dan join biar newline ga ngerusak tabel
                     demoTableRows = current.demo_results.map(item => {
                         const colInput = cleanTable(item.input);
                         const colReply = cleanTable(item.reply);
@@ -143,7 +144,9 @@ jobs:
                 }
 
                 // --- 4. RAKIT BODY ---
-                const body = `
+                // Perhatikan: Gunakan backtick biasa.
+                // Indentasi di sini TIDAK APA-APA karena akan kita hapus dengan regex di bawah.
+                let body = `
                 ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
                 #### 📊 Scorecard
@@ -168,6 +171,11 @@ jobs:
                 | :--- | :--- |
                 ${demoTableRows}
                 `;
+
+                // --- 5. MAGIC CLEANER (SOLUSI UTAMA) ---
+                // Regex ini menghapus semua spasi di awal setiap baris (indentasi YAML).
+                // Ini membuat Markdown menjadi rata kiri (flush left) sehingga dirender benar oleh GitHub.
+                body = body.replace(/^ +/gm, '');
 
                 github.rest.issues.createComment({
                   issue_number: context.issue.number,
