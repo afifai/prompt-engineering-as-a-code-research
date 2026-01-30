@@ -77,8 +77,7 @@ jobs:
                 if (diff > 0) icon = '🚀 (Improved)';
                 if (diff < 0) icon = '⚠️ (Degraded)';
 
-                // --- 2. VALIDATION ANALYSIS (LIST MODE) ---
-                // Kita tidak pakai tabel raksasa lagi biar tidak pecah
+                // --- 2. VALIDATION ANALYSIS (Ground Truth Comparison) ---
                 const baseResults = baseline.results;
                 const currResults = current.results;
                 
@@ -92,48 +91,48 @@ jobs:
                     const curr = currResults[i];
                     
                     if (base.is_correct !== curr.is_correct) {
-                        // Bersihkan teks
                         const inputClean = curr.input.replace(/[\r\n]+/g, " ");
-                        const expected = curr.expected;
-                        const gotRaw = curr.actual_raw.replace(/[\r\n]+/g, " ").substring(0, 50) + "...";
+                        const expected = curr.expected; // INI GROUND TRUTH NYA
+                        const gotRaw = curr.actual_raw.replace(/[\r\n]+/g, " ").substring(0, 60) + "..."; // Truncate dikit biar gak menuhin layar
                         
                         if (base.is_correct && !curr.is_correct) {
                             // REGRESSION
-                            regressionList += `- 🔴 **Input:** "${inputClean}"\n  - **Ground Truth:** ${expected}\n  - **AI Reply:** ${gotRaw}\n`;
+                            regressionList += `- 🔴 **Input:** "${inputClean}"\n  - **Ground Truth:** \`${expected}\`\n  - **AI Reply:** ${gotRaw}\n\n`;
                             regressionCount++;
                         } else if (!base.is_correct && curr.is_correct) {
                             // FIXED
-                            fixList += `- 🟢 **Input:** "${inputClean}"\n  - **Ground Truth:** ${expected}\n  - **AI Reply:** ${gotRaw}\n`;
+                            fixList += `- 🟢 **Input:** "${inputClean}"\n  - **Ground Truth:** \`${expected}\`\n  - **AI Reply:** ${gotRaw}\n\n`;
                             fixCount++;
                         }
                     }
                 }
 
-                // --- 3. LIVE DEMO INFERENCE (NEW DATA) ---
-                // Menampilkan 5 sample data baru
+                // --- 3. INFERENCE DEMO (Data Baru Tanpa Label) ---
                 let demoRows = "";
-                if (current.demo_results) {
+                if (current.demo_results && current.demo_results.length > 0) {
                     current.demo_results.forEach(item => {
-                        const replyClean = item.reply.replace(/[\r\n]+/g, "<br>").replace(/\|/g, "I"); // Pakai <br> biar rapi di tabel
+                        // Clean text for table formatting
+                        const replyClean = item.reply.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>"); 
                         demoRows += `| ${item.input} | ${replyClean} |\n`;
                     });
                 } else {
-                    demoRows = "| No demo data | - |\n";
+                    demoRows = "| No inference data found | - |\n";
                 }
 
                 // --- 4. RAKIT BODY ---
-                // Kita pisah string biar aman dari indentasi
                 const body = `
                 ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
                 
-                #### 📊 Overall Performance
+                #### 📊 Overall Performance (Validation Set)
                 | Metric | Main Branch | This PR | Change |
                 | :--- | :---: | :---: | :---: |
                 | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
                 
                 ---
                 
-                #### 🔍 Validation Insights
+                #### 🔍 Validation Insights (Ground Truth vs Prediction)
+                > Menampilkan item yang statusnya berubah (Benar <-> Salah) dibanding Main Branch.
+                
                 **New Fixes: ${fixCount}**
                 ${fixCount > 0 ? fixList : "_No new fixes._"}
                 
@@ -142,8 +141,8 @@ jobs:
                 
                 ---
                 
-                #### 🎮 Live Inference Demo (Unlabeled Data)
-                _Berikut adalah simulasi balasan AI untuk data baru:_
+                #### 🎮 Live Inference Showcase
+                > Simulasi balasan AI menggunakan data baru dari \`data/inference.csv\`.
                 
                 | User Input | Generated Reply (Recommendation) |
                 | :--- | :--- |
