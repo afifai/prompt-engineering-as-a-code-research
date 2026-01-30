@@ -68,6 +68,15 @@ jobs:
             const fs = require('fs');
 
             try {
+                // Helper: Bersihkan teks biar tabel gak pecah
+                // Membuang karakter pipe '|' dan ganti newline dengan spasi
+                const cleanText = (text) => {
+                    if (!text) return "N/A";
+                    return text.replace(/\|/g, "I") // Ganti pipe jadi I
+                               .replace(/[\r\n]+/g, " ") // Ganti enter jadi spasi
+                               .trim();
+                };
+
                 const baseline = JSON.parse(fs.readFileSync('baseline_metrics.json', 'utf8'));
                 const current = JSON.parse(fs.readFileSync('current_metrics.json', 'utf8'));
 
@@ -87,6 +96,8 @@ jobs:
                     const base = baseResults[i];
                     const curr = currResults[i];
                     
+                    // Kita tampilkan jika statusnya berubah ATAU jika di PR ini masih salah (biar kelihatan salahnya apa)
+                    // Tapi fokus utama adalah PERUBAHAN
                     if (base.is_correct !== curr.is_correct) {
                         let statusIcon = "";
                         if (base.is_correct && !curr.is_correct) {
@@ -97,43 +108,45 @@ jobs:
                             improvementCount++;
                         }
                         
-                        const inputShort = base.input.length > 20 ? base.input.substring(0, 20) + "..." : base.input;
+                        const inputShort = cleanText(base.input).substring(0, 25) + "...";
                         
-                        // Handle jika actual_raw null/undefined karena error
+                        // Bersihkan output agent biar rapi di tabel
                         const baseReplyRaw = base.actual_raw || "N/A";
                         const currReplyRaw = curr.actual_raw || "N/A";
 
-                        const baseReply = baseReplyRaw.replace(/\n/g, " ").substring(0, 30) + "...";
-                        const currReply = currReplyRaw.replace(/\n/g, " ").substring(0, 30) + "...";
+                        const baseReply = cleanText(baseReplyRaw).substring(0, 40) + "...";
+                        const currReply = cleanText(currReplyRaw).substring(0, 40) + "...";
 
-                        comparisonRows += `| **${statusIcon}** | ${inputShort} | ${base.expected} | ${baseReply} | ${currReply} |\n`;
+                        // FORMAT TABEL YANG BENAR (Perhatikan spasi antar pipa)
+                        comparisonRows += `| ${statusIcon} | ${inputShort} | ${base.expected} | ${baseReply} | ${currReply} |\n`;
                     }
                 }
 
                 if (comparisonRows === "") {
-                    comparisonRows = "| ➖ | No behavior changes detected on sample data. | | | |";
+                    comparisonRows = "| ➖ | No behavior changes detected. | | | |\n";
                 }
 
-                // FIX FORMATTING: Tambahkan \n sebelum tabel
                 const body = `
                 ### 🤖 LLMOps Impact Report
                 
-                **Overall Performance:**
+                **Overall Performance**
                 
                 | Metric | Main Branch (Baseline) | This PR (Current) | Change |
-                |--------|------------------------|-------------------|--------|
+                | :--- | :---: | :---: | :---: |
                 | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
                 | **Passed** | ${baseline.passed}/${baseline.total} | ${current.passed}/${current.total} | |
                 
-                **Detailed Impact Analysis:**
+                **Detailed Impact Analysis**
                 - **New Fixes:** ${improvementCount}
                 - **Regressions:** ${regressionCount}
                 
                 <details open>
                 <summary>🔍 <strong>See Inference Differences</strong></summary>
                 
+                <br/>
+                
                 | Status | Input Snippet | Type | Main Reply (Baseline) | PR Reply (New) |
-                |--------|---------------|------|-----------------------|----------------|
+                | :--- | :--- | :--- | :--- | :--- |
                 ${comparisonRows}
                 
                 </details>
