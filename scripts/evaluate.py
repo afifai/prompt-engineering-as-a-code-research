@@ -83,7 +83,7 @@ def invoke_agent_with_retry(user_input, max_retries=3):
 
 def extract_xml_data(text):
     """
-    Helper extract XML dengan Regex yang lebih kuat (ignore case & whitespace)
+    Helper extract XML dengan 3 Layer Fallback
     """
     data = {
         "category": "UNKNOWN",
@@ -91,23 +91,38 @@ def extract_xml_data(text):
         "reply": "NO_REPLY"
     }
     
-    # Regex pattern: Mencari tag dengan kelonggaran spasi
-    # re.DOTALL: bikin titik (.) bisa match newline
-    # re.IGNORECASE: tidak peduli huruf besar/kecil tag-nya
-    
+    # --- LAYER 1: Standard XML Regex ---
     cat_match = re.search(r"<\s*category\s*>(.*?)<\s*/\s*category\s*>", text, re.DOTALL | re.IGNORECASE)
-    if cat_match: 
-        # Hapus kurung siku [] jika AI menambahkannya, lalu uppercase
-        clean_cat = cat_match.group(1).replace("[", "").replace("]", "").strip().upper()
-        data["category"] = clean_cat
-    
     reason_match = re.search(r"<\s*reason\s*>(.*?)<\s*/\s*reason\s*>", text, re.DOTALL | re.IGNORECASE)
-    if reason_match: 
-        data["reason"] = reason_match.group(1).strip()
-    
     reply_match = re.search(r"<\s*reply\s*>(.*?)<\s*/\s*reply\s*>", text, re.DOTALL | re.IGNORECASE)
-    if reply_match: 
+
+    if cat_match:
+        data["category"] = cat_match.group(1).replace("[", "").replace("]", "").strip().upper()
+    if reason_match:
+        data["reason"] = reason_match.group(1).strip()
+    if reply_match:
         data["reply"] = reply_match.group(1).strip()
+
+    # --- LAYER 2: Fallback (Cari Bracket [CATEGORY] jika XML gagal) ---
+    if data["category"] == "UNKNOWN":
+        if "[SPAM]" in text.upper(): data["category"] = "SPAM"
+        elif "[OPERATORS]" in text.upper(): data["category"] = "OPERATORS"
+        elif "[SAFE]" in text.upper(): data["category"] = "SAFE"
+    
+    # --- LAYER 3: Fallback Extreme (Cari kata kunci polos di awal teks) ---
+    if data["category"] == "UNKNOWN":
+        upper_text = text.upper()
+        # Asumsi AI nulis: "Category: SPAM"
+        if "CATEGORY: SPAM" in upper_text: data["category"] = "SPAM"
+        elif "CATEGORY: OPERATORS" in upper_text: data["category"] = "OPERATORS"
+        elif "CATEGORY: SAFE" in upper_text: data["category"] = "SAFE"
+
+    # --- FINAL CLEANUP ---
+    # Pastikan category valid, kalau tidak paksa ke SAFE (Fail-safe)
+    valid_cats = ["SPAM", "OPERATORS", "SAFE"]
+    if data["category"] not in valid_cats:
+        # Jika text pendek/gantung biasanya SAFE
+        data["category"] = "SAFE" 
     
     return data
 
