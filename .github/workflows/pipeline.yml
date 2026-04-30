@@ -1,4 +1,4 @@
-name: LLMOps PR Evaluator
+name: LLMOps PR Evaluator — Translation Quality
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
 permissions:
   id-token: write
   contents: read
-  pull-requests: write # IZIN PENTING: Supaya bot boleh komen di PR
+  pull-requests: write
 
 jobs:
   compare-performance:
@@ -23,8 +23,8 @@ jobs:
       - name: Checkout Main Branch
         uses: actions/checkout@v4
         with:
-          ref: main          # Ambil kodingan versi Main (Stabil)
-          path: main-code    # Simpan di folder khusus
+          ref: main
+          path: main-code
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -48,7 +48,7 @@ jobs:
       - name: Checkout PR Branch
         uses: actions/checkout@v4
         with:
-          path: pr-code      # Ambil kodingan versi PR (Eksperimen)
+          path: pr-code
 
       - name: Run Evaluation on PR (New Code)
         env:
@@ -74,94 +74,96 @@ jobs:
                 // --- HELPERS ---
                 const clean = (text) => {
                     if (!text) return "-";
-                    return text.replace(/\|/g, "I").replace(/[\r\n]+/g, " ").trim();
+                    return text.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ").trim();
                 };
-                
+
                 const cleanTable = (text) => {
                     if (!text) return "-";
-                    return text.replace(/\|/g, "I").replace(/[\r\n]+/g, "<br>").trim();
+                    return text.replace(/\|/g, "\\|").replace(/[\r\n]+/g, "<br>").trim();
                 };
 
                 // --- 1. SCORECARD ---
-                const diff = current.accuracy - baseline.accuracy;
-                let icon = '➖';
-                if (diff > 0) icon = '🚀 (Improved)';
-                if (diff < 0) icon = '⚠️ (Degraded)';
+                const scoreDiff = current.avg_judge_score - baseline.avg_judge_score;
+                const qualityDiff = current.quality_percentage - baseline.quality_percentage;
+                const diffAccDiff = current.difficulty_accuracy - baseline.difficulty_accuracy;
 
-                // --- 2. VALIDATION REPORT (COMPARING MAIN VS PR) ---
+                const icon = (diff) => {
+                    if (diff > 0) return '🚀 Improved';
+                    if (diff < 0) return '⚠️ Degraded';
+                    return '➖ No Change';
+                };
+
+                // --- 2. VALIDATION REPORT (Side-by-Side with Judge Scores) ---
                 const baseResults = baseline.results;
                 const currResults = current.results;
-                
-                // Header Tabel (Sekarang 5 Kolom)
-                let validationRows = "| Status | Input Snippet | Ground Truth | Main Branch | This PR |\n| :---: | :--- | :--- | :--- | :--- |\n";
-                
-                // Pakai For Loop biasa biar bisa ambil index 'i'
-                for (let i = 0; i < currResults.length; i++) {
-                    const item = currResults[i];     // Hasil PR (Current)
-                    const baseItem = baseResults[i]; // Hasil Main (Baseline)
 
-                    // Logic Icon
-                    const statusIcon = item.is_correct ? "✅" : "❌";
-                    
-                    // Format Data
-                    const inputShort = clean(item.input).substring(0, 30) + "...";
-                    const expected = clean(item.expected);
-                    
-                    // Ambil Label Prediksi
-                    const mainPred = clean(baseItem.actual_category || "N/A");
-                    const prPred = clean(item.actual_category || "N/A");
-                    
-                    // Formatting: Kalau Salah di-Bold
-                    const prDisplay = item.is_correct ? prPred : `**${prPred}**`;
-                    
-                    // Rakit Baris
-                    validationRows += `| ${statusIcon} | ${inputShort} | ${expected} | ${mainPred} | ${prDisplay} |\n`;
+                let validationRows = "| Judge | Input | Expected | Main Translation | PR Translation | Main Score | PR Score | Reasoning |\n";
+                validationRows += "| :---: | :--- | :--- | :--- | :--- | :---: | :---: | :--- |\n";
+
+                for (let i = 0; i < currResults.length; i++) {
+                    const item = currResults[i];
+                    const baseItem = baseResults[i] || {};
+
+                    // Score comparison icon
+                    const scoreIcon = item.judge_score >= 4 ? "✅" : item.judge_score >= 3 ? "🟡" : "❌";
+
+                    const inputShort = clean(item.input).substring(0, 25) + "...";
+                    const expected = clean(item.expected_translation).substring(0, 30) + "...";
+                    const mainTrans = clean(baseItem.actual_translation || "N/A").substring(0, 30) + "...";
+                    const prTrans = clean(item.actual_translation || "N/A").substring(0, 30) + "...";
+                    const mainScore = baseItem.judge_score != null ? `${baseItem.judge_score}/5` : "N/A";
+                    const prScore = `${item.judge_score}/5`;
+                    const reasoning = clean(item.judge_reasoning).substring(0, 50) + "...";
+
+                    validationRows += `| ${scoreIcon} | ${inputShort} | ${expected} | ${mainTrans} | ${prTrans} | ${mainScore} | ${prScore} | ${reasoning} |\n`;
                 }
 
-                // --- 3. INFERENCE REPORT (INDONESIAN ANALYSIS) ---
+                // --- 3. INFERENCE REPORT ---
                 let inferenceRows = "";
                 if (current.demo_results && current.demo_results.length > 0) {
                     inferenceRows = current.demo_results.map(item => {
                         const colInput = cleanTable(item.input);
-                        const colLabel = `**${cleanTable(item.category)}**`;
-                        const colReason = cleanTable(item.reason); // Ini nanti isinya Bhs Indo
-                        
-                        let colReply = cleanTable(item.reply);
-                        if (colReply === "NO_REPLY") colReply = "<em>(No Reply)</em>";
-
-                        return `| ${colInput} | ${colLabel} | ${colReason} | ${colReply} |`;
+                        const colTranslation = cleanTable(item.translation);
+                        const colDifficulty = `**${cleanTable(item.difficulty)}**`;
+                        const colAnalysis = cleanTable(item.analysis);
+                        const colNotes = cleanTable(item.notes);
+                        return `| ${colInput} | ${colTranslation} | ${colDifficulty} | ${colAnalysis} | ${colNotes} |`;
                     }).join("\n");
                 } else {
-                    inferenceRows = "| - | - | - | - |";
+                    inferenceRows = "| - | - | - | - | - |";
                 }
 
-                // --- 4. RAKIT LAPORAN ---
+                // --- 4. BUILD REPORT ---
                 let body = `
-                ### 🤖 LLMOps Report: ${context.sha.substring(0, 7)}
-                
+                ### 🌐 LLMOps Translation Report: ${context.sha.substring(0, 7)}
+
+                > **LLM-as-a-Judge Pattern**: Translation quality scored by Claude 3 Haiku (Judge) evaluating Claude 3 Sonnet (Translator).
+
                 #### 📊 Scorecard
                 | Metric | Main Branch | This PR | Change |
                 | :--- | :---: | :---: | :---: |
-                | **Accuracy** | ${baseline.accuracy.toFixed(2)}% | ${current.accuracy.toFixed(2)}% | ${icon} |
-                
+                | **Avg Judge Score** | ${baseline.avg_judge_score}/5 | ${current.avg_judge_score}/5 | ${icon(scoreDiff)} |
+                | **Quality %** | ${baseline.quality_percentage}% | ${current.quality_percentage}% | ${icon(qualityDiff)} |
+                | **Difficulty Accuracy** | ${baseline.difficulty_accuracy}% | ${current.difficulty_accuracy}% | ${icon(diffAccDiff)} |
+
                 ---
-                
-                #### 📋 Validation Results (Side-by-Side)
-                _Membandingkan prediksi **Main Branch** vs **This PR**._
-                
+
+                #### 🧑‍⚖️ Validation Results (Judged by LLM)
+                _Each translation is scored 1-5 by an independent LLM judge._
+
                 ${validationRows}
-                
+
                 ---
-                
-                #### 🧠 AI Analysis & Reasoning (Indonesian)
-                _Analisis AI terhadap data baru (Live Inference)._
-                
-                | Input | Label | Analisis & Alasan | Rekomendasi Balasan |
-                | :--- | :--- | :--- | :--- |
+
+                #### 🌏 Live Translation Showcase (Inference)
+                _AI translations of new, unseen Indonesian sentences._
+
+                | Input (Indonesian) | Translation (English) | Difficulty | Analysis | Notes |
+                | :--- | :--- | :--- | :--- | :--- |
                 ${inferenceRows}
                 `;
 
-                // Anti-Indentasi (Wajib ada biar tabel ga pecah)
+                // Remove leading whitespace from each line
                 body = body.replace(/^ +/gm, '');
 
                 github.rest.issues.createComment({

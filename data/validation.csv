@@ -1,16 +1,16 @@
-input,expected_label
-Besok mau ke kampus lagi ga?,SAFE
-"PROMO BLACKBERRY BB DAKOTA 2,9jt BB Torch 2jt BB Davis 1,5jt BB Onyx 1,4jt BB Gemini 950rb Berminat hub : 085715186696 Promo terbatas*",SPAM
-BONUS PULSA 50rb cuma dgn isi ulang 25rb!! Hny Indosat yg bisa begini. Penawaran berlaku s/d 11 April 2016. Bonus 1x utk digunakan ke sesama Indosat Ooredoo,OPERATORS
-dikirim nya disatuin ?,SAFE
-"Jangan sampai kalah Bro, games mu bisa terbantu dengan menambah koinmu, beli aja pakai pulsa, cek caranya di http://tsel.me/jajanonline",OPERATORS
-PT.TRI CARE PIN Pemenang ( •••••• ) anda m-dptkan HADIAH I unit TOYOTA YARIS U/Info cek pin klik: www.tricare2015.blogspot.com,SPAM
-Bisa bu...buka jam 11 bu,SAFE
-"Permintaan Anda sedang diproses. Beberapa saat lagi Paket Internet anda akan di non-aktifkan, dan akan berlaku tariff dasar internet.",OPERATORS
-"Ibunya lagi bobok, aku mau nanya ttg daging, kalo ada daging mau di presto dulu juga",SAFE
-Segera aktivasi rekening BTPN Wow! anda. Ketik *247# tekan Yes / Call lalu buat PIN rahasia Anda. Info lengkap hub. 1500300,OPERATORS
-"Info Gacor Zeus Olympus maxwin hari ini bos",SPAM
-"Selamat siang, apakah bank buka hari ini?",SAFE
-"Butuh dana cepat cair? Hubungi kami",SPAM
-"Pinjam dulu seratus besok diganti",SPAM
-"Selamat, gaji bulan Januari sebesar Rp 10.000.000 telah masuk",SAFE
+input,expected_translation,expected_difficulty
+"Aku lagi gabut nih, mau ngapain ya?","I'm so bored right now, what should I do?",SIMPLE
+"Tolong belikan saya dua kilo beras di warung sebelah.","Please buy me two kilograms of rice at the shop next door.",SIMPLE
+"Sudah jatuh tertimpa tangga pula.","When it rains, it pours.",MODERATE
+"Dia orangnya nggak enakan, jadi sering dimanfaatin teman-temannya.","He's too much of a people-pleaser, so his friends often take advantage of him.",MODERATE
+"Implementasi arsitektur microservices memungkinkan skalabilitas horizontal yang lebih efisien.","Implementing a microservices architecture enables more efficient horizontal scalability.",COMPLEX
+"Jangan asal bunyi kalau nggak tahu duduk perkaranya.","Don't run your mouth if you don't know the full story.",MODERATE
+"Saya ingin mengajukan cuti tahunan selama lima hari kerja mulai tanggal 10 Januari.","I would like to submit my annual leave request for five working days starting January 10th.",SIMPLE
+"Bagai air di daun talas.","Like water off a duck's back.",MODERATE
+"Pemanfaatan teknologi blockchain dalam rantai pasok dapat meningkatkan transparansi dan akuntabilitas.","The utilization of blockchain technology in supply chains can improve transparency and accountability.",COMPLEX
+"Nasi uduk sama gorengan, sarapan paling mantap!","Nasi uduk and fried snacks — the best breakfast ever!",SIMPLE
+"Habis manis sepah dibuang.","Once the sweetness is gone, the pulp is discarded.",MODERATE
+"Dia lagi bucin parah, tiap hari stalking medsos gebetannya.","He's totally lovesick, stalking his crush's social media every day.",MODERATE
+"Analisis sentimen berbasis transformer menunjukkan akurasi yang lebih tinggi dibandingkan metode bag-of-words tradisional.","Transformer-based sentiment analysis demonstrates higher accuracy compared to traditional bag-of-words methods.",COMPLEX
+"Aku nggak bisa ikut nongkrong, lagi bokek banget.","I can't hang out, I'm totally broke.",SIMPLE
+"Pemerintah mencanangkan program ketahanan pangan nasional untuk mengurangi ketergantungan terhadap impor.","The government has launched a national food security program to reduce dependence on imports.",COMPLEX
