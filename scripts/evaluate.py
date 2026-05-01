@@ -19,7 +19,7 @@ METRICS_OUTPUT_PATH = "metrics.json"
 AGENT_ID = os.environ.get("AGENT_ID")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
-JUDGE_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
+JUDGE_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
 bedrock_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
