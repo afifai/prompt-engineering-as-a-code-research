@@ -267,9 +267,17 @@ def run_evaluation():
                 expected_translation = row['expected_translation'].strip()
                 expected_difficulty = row['expected_difficulty'].strip().upper()
 
-                # Step 1: Get translation from the Agent
-                raw_response = invoke_agent_with_retry(user_input)
-                parsed = extract_xml_data(raw_response)
+                # Step 1: Get translation from the Agent (with retry for empty results)
+                agent_input = f"Terjemahkan kalimat berikut ke Bahasa Inggris:\n\n{user_input}"
+                parsed = None
+                for translate_attempt in range(3):
+                    raw_response = invoke_agent_with_retry(agent_input)
+                    print(f"    📝 Raw ({translate_attempt+1}): {raw_response[:100]}...")
+                    parsed = extract_xml_data(raw_response)
+                    if parsed["result"] and "SYSTEM_ERROR" not in parsed["result"] and "asisten AI" not in parsed["result"]:
+                        break
+                    print(f"    ⚠️  Empty/bad translation, retrying ({translate_attempt + 1}/3)...")
+                    time.sleep(3)
 
                 # Step 2: Use LLM-as-a-Judge to evaluate quality
                 judge_result = invoke_judge(
@@ -312,8 +320,17 @@ def run_evaluation():
             reader = csv.DictReader(csvfile)
             for row in reader:
                 user_input = row['input']
-                raw_response = invoke_agent_with_retry(user_input)
-                parsed = extract_xml_data(raw_response)
+
+                # Retry for empty results
+                agent_input = f"Terjemahkan kalimat berikut ke Bahasa Inggris:\n\n{user_input}"
+                parsed = None
+                for translate_attempt in range(3):
+                    raw_response = invoke_agent_with_retry(agent_input)
+                    parsed = extract_xml_data(raw_response)
+                    if parsed["result"] and "SYSTEM_ERROR" not in parsed["result"] and "asisten AI" not in parsed["result"]:
+                        break
+                    print(f"    ⚠️  Empty/bad translation, retrying ({translate_attempt + 1}/3)...")
+                    time.sleep(3)
 
                 print(f"  📥 In: {user_input[:30]}... | 🏷️ Diff: {parsed['difficulty']}")
 
