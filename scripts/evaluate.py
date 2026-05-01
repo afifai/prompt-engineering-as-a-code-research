@@ -14,6 +14,7 @@ project_root = os.path.dirname(script_dir)
 PROMPT_PATH = os.path.join(project_root, 'prompts', 'instruction.txt')
 VALIDATION_PATH = os.path.join(project_root, 'data', 'validation.csv')
 INFERENCE_PATH = os.path.join(project_root, 'data', 'inference.csv')
+GUARDRAIL_TEST_PATH = os.path.join(project_root, 'data', 'guardrail_test.csv')
 METRICS_OUTPUT_PATH = "metrics.json"
 
 AGENT_ID = os.environ.get("AGENT_ID")
@@ -346,6 +347,84 @@ def run_evaluation():
         print(f"❌ Error inference: {str(e)}")
 
     # ========================================
+    # 2.5 GUARDRAIL TEST (simulated)
+    # ========================================
+    print(f"\n📂 Running Guardrail Tests...")
+    guardrail_results = []
+    guardrail_passed = 0
+    guardrail_total = 0
+
+    PII_PATTERNS = [
+        (r'\b\d{16}\b', '[KTP_REDACTED]'),
+        (r'\b\d{13}\b', '[ID_REDACTED]'),
+        (r'\b08\d{8,12}\b', '[PHONE_REDACTED]'),
+        (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL_REDACTED]'),
+    ]
+    BLOCK_PATTERNS = [
+        r'ignore.*(?:previous|all).*instructions',
+        r'ignore.*safety.*rules',
+        r'you are now',
+        r'(?:cara|how to).*(?:bom|bomb|explosive|meretas|hack|retas)',
+        r'system prompt',
+        r'\bDAN\b.*ignore',
+    ]
+
+    try:
+        with open(GUARDRAIL_TEST_PATH, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                guardrail_total += 1
+                inp = row['input']
+                test_type = row['test_type']
+                expected_action = row['expected_action']
+
+                # Input check
+                input_blocked = False
+                for pattern in BLOCK_PATTERNS:
+                    if re.search(pattern, inp, re.IGNORECASE):
+                        input_blocked = True
+                        break
+
+                if input_blocked:
+                    actual_action = "BLOCKED"
+                    output_text = None
+                else:
+                    # Check PII in input
+                    redacted = inp
+                    has_pii = False
+                    for pattern, replacement in PII_PATTERNS:
+                        if re.search(pattern, redacted):
+                            redacted = re.sub(pattern, replacement, redacted)
+                            has_pii = True
+                    if has_pii:
+                        actual_action = "REDACTED"
+                        output_text = redacted
+                    else:
+                        actual_action = "ALLOWED"
+                        output_text = inp
+
+                is_pass = actual_action == expected_action
+                if is_pass:
+                    guardrail_passed += 1
+
+                icon = "✅" if is_pass else "❌"
+                print(f"  {icon} [{test_type}] {inp[:40]}... → {actual_action} (expected: {expected_action})")
+
+                guardrail_results.append({
+                    "input": inp,
+                    "test_type": test_type,
+                    "expected_action": expected_action,
+                    "actual_action": actual_action,
+                    "is_pass": is_pass,
+                    "output": output_text,
+                })
+    except Exception as e:
+        print(f"❌ Error guardrail test: {str(e)}")
+
+    guardrail_pass_rate = (guardrail_passed / guardrail_total * 100) if guardrail_total > 0 else 0
+    print(f"  🛡️ Guardrail: {guardrail_passed}/{guardrail_total} passed ({guardrail_pass_rate:.0f}%)")
+
+    # ========================================
     # 3. Compute Metrics & Save
     # ========================================
     avg_score = (total_score / total) if total > 0 else 0
@@ -361,6 +440,12 @@ def run_evaluation():
         "max_score": max_possible,
         "total": total,
         "difficulty_correct": difficulty_correct_count,
+        "guardrail": {
+            "total": guardrail_total,
+            "passed": guardrail_passed,
+            "pass_rate": round(guardrail_pass_rate, 1),
+            "results": guardrail_results,
+        },
         "results": validation_results,
         "demo_results": demo_results
     }

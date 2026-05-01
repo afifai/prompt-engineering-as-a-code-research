@@ -133,7 +133,38 @@ jobs:
                     inferenceRows = "| - | - | - | - | - |";
                 }
 
-                // --- 4. BUILD REPORT ---
+                // --- 4. GUARDRAIL REPORT ---
+                let guardrailSection = "";
+                if (current.guardrail && current.guardrail.results && current.guardrail.results.length > 0) {
+                    const gr = current.guardrail;
+                    const grStatus = gr.pass_rate === 100 ? "✅ ALL PASSED" : "⚠️ SOME FAILED";
+
+                    let grRows = "| Status | Input | Type | Expected | Actual |\n";
+                    grRows += "| :---: | :--- | :--- | :---: | :---: |\n";
+
+                    for (const item of gr.results) {
+                        const grIcon = item.is_pass ? "✅" : "❌";
+                        const grInput = clean(item.input).substring(0, 40) + "...";
+                        grRows += `| ${grIcon} | ${grInput} | ${item.test_type} | ${item.expected_action} | ${item.actual_action} |\n`;
+                    }
+
+                    guardrailSection = `
+                    ---
+
+                    #### 🛡️ Guardrail Test Results
+                    _Automated safety checks: jailbreak prevention, PII redaction, harmful content blocking._
+
+                    | Metric | Result |
+                    | :--- | :---: |
+                    | **Tests Passed** | ${gr.passed}/${gr.total} |
+                    | **Pass Rate** | ${gr.pass_rate}% |
+                    | **Status** | ${grStatus} |
+
+                    ${grRows}
+                    `;
+                }
+
+                // --- 5. BUILD REPORT ---
                 let body = `
                 ### 🌐 LLMOps Translation Report: ${context.sha.substring(0, 7)}
 
@@ -161,6 +192,7 @@ jobs:
                 | Input (Indonesian) | Translation (English) | Difficulty | Analysis | Notes |
                 | :--- | :--- | :--- | :--- | :--- |
                 ${inferenceRows}
+                ${guardrailSection}
                 `;
 
                 // Remove leading whitespace from each line
